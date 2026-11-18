@@ -1,0 +1,70 @@
+name: aot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build compiler
+        run: mvn -B -q package
+
+      - name: Compile test classes
+        run: |
+          mkdir -p build/classes
+          javac -d build/classes testdata/*.java
+          ls -la build/classes
+
+      - name: Verify bytecode version
+        run: |
+          javap -v -cp build/classes Hello | grep -E 'major|minor'
+
+      - name: Emit LLVM IR
+        run: |
+          java -jar target/ios-jvm-aot.jar -cp build/classes -o build/out.ll
+          head -40 build/out.ll
+
+      - name: Link for macOS
+        run: |
+          clang -O1 build/out.ll -o build/hello-macos
+          ./build/hello-macos | tee build/macos-out.txt
+          echo "--- expected ---"
+          printf 'hello from java 21 bytecode\n42\n110\n42\n' > build/expected.txt
+          diff build/expected.txt build/macos-out.txt && echo MACOS_OK
+
+      - name: Link for iOS simulator arm64
+        run: |
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          xcrun --sdk iphonesimulator clang -O1 \
+            -target arm64-apple-ios16.0-simulator \
+            -isysroot "$SDK" \
+            build/out.ll -o build/hello-sim
+          file build/hello-sim
+
+      - name: Link for iOS device arm64
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang -O1 -c \
+            -target arm64-apple-ios16.0 \
+            -isysroot "$SDK" \
+            build/out.ll -o build/hello-device.o
+          file build/hello-device.o
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aot-output
+          path: |
+            build/out.ll
+            build/hello-macos
+            build/hello-sim
+            build/hello-device.o
