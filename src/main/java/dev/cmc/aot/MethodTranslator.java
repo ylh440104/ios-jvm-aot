@@ -130,6 +130,19 @@ public final class MethodTranslator {
             }
             case Opcodes.ILOAD -> pushIntFromLocal(((VarInsnNode) insn).var);
             case Opcodes.ISTORE -> storeLocal(((VarInsnNode) insn).var);
+            case Opcodes.IINC -> {
+                org.objectweb.asm.tree.IincInsnNode inc = (org.objectweb.asm.tree.IincInsnNode) insn;
+                String p = localPtr(inc.var);
+                String old = nv("iv");
+                body.append("  ").append(old).append(" = load i64, ptr ").append(p).append("\n");
+                String o32 = nv("iv");
+                body.append("  ").append(o32).append(" = trunc i64 ").append(old).append(" to i32\n");
+                String n32 = nv("iv");
+                body.append("  ").append(n32).append(" = add i32 ").append(o32).append(", ").append(inc.incr).append("\n");
+                String n64 = nv("iv");
+                body.append("  ").append(n64).append(" = sext i32 ").append(n32).append(" to i64\n");
+                body.append("  store i64 ").append(n64).append(", ptr ").append(p).append("\n");
+            }
             case Opcodes.ALOAD -> loadLocal(((VarInsnNode) insn).var);
             case Opcodes.ASTORE -> storeLocal(((VarInsnNode) insn).var);
             case Opcodes.IADD, Opcodes.ISUB, Opcodes.IMUL, Opcodes.IAND, Opcodes.IOR, Opcodes.IXOR -> arith(op);
@@ -344,9 +357,14 @@ public final class MethodTranslator {
         pushInt(t);
     }
 
-    private String loadLocal(int idx) {
+    private String localPtr(int idx) {
         String p = nv("lp");
         body.append("  ").append(p).append(" = getelementptr [").append(Math.max(mn.maxLocals, 1)).append(" x i64], ptr %locals, i64 0, i32 ").append(idx).append("\n");
+        return p;
+    }
+
+    private String loadLocal(int idx) {
+        String p = localPtr(idx);
         String v = nv("lv");
         body.append("  ").append(v).append(" = load i64, ptr ").append(p).append("\n");
         return v;
@@ -354,8 +372,7 @@ public final class MethodTranslator {
 
     private void storeLocal(int idx) {
         String v = pop();
-        String p = nv("lp");
-        body.append("  ").append(p).append(" = getelementptr [").append(Math.max(mn.maxLocals, 1)).append(" x i64], ptr %locals, i64 0, i32 ").append(idx).append("\n");
+        String p = localPtr(idx);
         body.append("  store i64 ").append(v).append(", ptr ").append(p).append("\n");
     }
 
