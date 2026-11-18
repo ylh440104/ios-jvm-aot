@@ -33,26 +33,32 @@ jobs:
 
       - name: Emit LLVM IR
         run: |
-          java -jar target/ios-jvm-aot.jar -cp build/classes -o build/out.ll
-          echo '--- head of IR ---'
-          head -30 build/out.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/hello.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/obj.ll
+          echo '--- head of obj IR ---'
+          head -20 build/obj.ll
 
       - name: Verify IR is well formed
         run: |
-          llvm-as build/out.ll -o build/out.bc
+          llvm-as build/hello.ll -o build/hello.bc
+          llvm-as build/obj.ll -o build/obj.bc
           echo IR_VERIFY_OK
 
       - name: Execute IR with lli
         run: |
-          lli build/out.bc | tee build/actual.txt
-          printf 'hello from java 21 bytecode\n42\n110\n42\n' > build/expected.txt
-          echo '--- diff ---'
-          diff build/expected.txt build/actual.txt && echo SEMANTICS_OK
+          lli build/hello.bc > build/hello.txt
+          printf 'hello from java 21 bytecode\n42\n110\n42\n' > build/hello.expected
+          diff build/hello.expected build/hello.txt && echo HELLO_OK
+          lli build/obj.bc > build/obj.txt
+          printf '7\n14\n25\n49\n1\n' > build/obj.expected
+          diff build/obj.expected build/obj.txt && echo OBJECTS_OK
 
       - name: Compile with clang
         run: |
-          clang -O1 build/out.ll -o build/hello
-          ./build/hello
+          clang -O1 build/hello.ll -o build/hello-bin
+          ./build/hello-bin
+          clang -O1 build/obj.ll -o build/obj-bin
+          ./build/obj-bin
 
   ios:
     if: github.event_name == 'workflow_dispatch'

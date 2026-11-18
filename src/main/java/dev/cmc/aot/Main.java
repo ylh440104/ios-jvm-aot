@@ -16,10 +16,12 @@ public final class Main {
     public static void main(String[] args) throws IOException {
         Path cp = null;
         Path out = Path.of("out.ll");
+        String entryClass = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "-cp" -> cp = Path.of(args[++i]);
                 case "-o" -> out = Path.of(args[++i]);
+                case "-entry" -> entryClass = args[++i];
                 default -> {
                     System.err.println("unknown arg " + args[i]);
                     System.exit(2);
@@ -49,8 +51,10 @@ public final class Main {
             for (MethodNode mn : c.methods()) {
                 funcs.append(MethodTranslator.translate(c, mn, pool, declares, layout)).append('\n');
                 if ("main".equals(mn.name) && "([Ljava/lang/String;)V".equals(mn.desc) && ClassParser.isStatic(mn)) {
-                    entry = ClassParser.mangle(c.name(), mn.name, mn.desc);
-                    entryArgs = TypeUtil.argKinds(mn.desc);
+                    if (entryClass == null || entryClass.equals(c.name())) {
+                        entry = ClassParser.mangle(c.name(), mn.name, mn.desc);
+                        entryArgs = TypeUtil.argKinds(mn.desc);
+                    }
                 }
             }
         }
