@@ -63,9 +63,12 @@ public final class Layout {
                         continue;
                     }
                     String key = name + "#" + f.name();
-                    if (!fieldOffsets.containsKey(key)) {
+                    Integer existing = fieldOffsets.get(key);
+                    if (existing == null) {
                         fieldOffsets.put(key, offset);
                         offset += 8;
+                    } else {
+                        offset = Math.max(offset, existing + 8);
                     }
                 }
             }

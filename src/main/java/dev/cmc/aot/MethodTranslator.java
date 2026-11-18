@@ -126,6 +126,7 @@ public final class MethodTranslator {
                 terminated = true;
             }
             case Opcodes.ICONST_M1 -> pushIntLit(-1);
+            case Opcodes.ACONST_NULL -> pushIntLit(0);
             case Opcodes.ICONST_0 -> pushIntLit(0);
             case Opcodes.ICONST_1 -> pushIntLit(1);
             case Opcodes.ICONST_2 -> pushIntLit(2);

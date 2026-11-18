@@ -46,24 +46,22 @@ jobs:
           llvm-as build/st.ll -o build/st.bc
           echo IR_VERIFY_OK
 
-      - name: Execute IR with lli
+      - name: Execute IR and diff against JVM
         run: |
-          lli build/hello.bc > build/hello.txt
-          printf 'hello from java 21 bytecode\n42\n110\n42\n' > build/hello.expected
-          diff build/hello.expected build/hello.txt && echo HELLO_OK
-          lli build/obj.bc > build/obj.txt
-          printf '7\n14\n25\n49\n1\n' > build/obj.expected
-          diff build/obj.expected build/obj.txt && echo OBJECTS_OK
-          lli build/arr.bc > build/arr.txt
-          printf '30\n5\n0\n42\n2\n' > build/arr.expected
-          diff build/arr.expected build/arr.txt && echo ARRAYS_OK
-          lli build/st.bc > build/st.txt
-          printf '7\n12\n48\n212\n' > build/st.expected
-          diff build/st.expected build/st.txt && echo STATICS_OK
+          set -e
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st; do
+            name="${t%%:*}"
+            tag="${t##*:}"
+            lli "build/$tag.bc" > "build/$tag.txt"
+            ( cd build/classes && java "$name" ) > "build/$tag.golden"
+            echo "--- $name ---"
+            diff "build/$tag.golden" "build/$tag.txt" && echo "${name}_OK"
+          done
+          echo ALL_SEMANTICS_OK
 
       - name: Compile with clang
         run: |
-          for t in hello obj arr; do
+          for t in hello obj arr st; do
             clang -O1 build/$t.ll -o build/$t-bin
             ./build/$t-bin
           done
