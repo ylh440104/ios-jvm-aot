@@ -73,13 +73,9 @@ public final class MethodTranslator {
         }
 
         for (AbstractInsnNode insn = mn.instructions.getFirst(); insn != null; insn = insn.getNext()) {
-            if (terminated) {
-                if (insn.getOpcode() == Opcodes.LABEL) {
-                    terminated = false;
-                } else {
-                    body.append("  ").append(nv("dead")).append(":\n");
-                    terminated = false;
-                }
+            if (terminated && !(insn instanceof LabelNode)) {
+                body.append("  ").append(nv("dead")).append(":\n");
+                terminated = false;
             }
             translateInsn(insn);
         }
@@ -92,6 +88,15 @@ public final class MethodTranslator {
     }
 
     private void translateInsn(AbstractInsnNode insn) {
+        if (insn instanceof LabelNode ln) {
+            String lbl = label(ln);
+            if (!terminated) {
+                body.append("  br label %").append(lbl).append("\n");
+            }
+            body.append(lbl).append(":\n");
+            terminated = false;
+            return;
+        }
         int op = insn.getOpcode();
         switch (op) {
             case Opcodes.NOP -> {
@@ -156,7 +161,6 @@ public final class MethodTranslator {
                 pushIntLit(0);
             }
             case Opcodes.INVOKEVIRTUAL, Opcodes.INVOKESTATIC, Opcodes.INVOKESPECIAL -> invoke((MethodInsnNode) insn);
-            case Opcodes.LABEL -> body.append(label((LabelNode) insn)).append(":\n");
             default -> fail("unsupported opcode " + op + " in " + owner.name() + "." + mn.name);
         }
     }
@@ -170,17 +174,20 @@ public final class MethodTranslator {
             }
             if ("print_str".equals(sig.cName) || "print_str_raw".equals(sig.cName)) {
                 if ("print_str".equals(sig.cName)) {
+                    String pv = toPtr(args[0]);
                     declares.add("declare i32 @puts(ptr)");
-                    body.append("  ").append(nv("r")).append(" = call i32 @puts(ptr ").append(toPtr(args[0])).append(")\n");
+                    body.append("  ").append(nv("r")).append(" = call i32 @puts(ptr ").append(pv).append(")\n");
                 } else {
                     String fmt = pool.internFormat("%s");
+                    String pv = toPtr(args[0]);
                     declares.add("declare i32 @printf(ptr, ...)");
-                    body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(toPtr(args[0])).append(")\n");
+                    body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(pv).append(")\n");
                 }
             } else if ("print_int".equals(sig.cName) || "print_int_raw".equals(sig.cName)) {
                 String fmt = pool.internFormat("print_int".equals(sig.cName) ? "%d\\0A" : "%d");
+                String iv = toInt(args[0]);
                 declares.add("declare i32 @printf(ptr, ...)");
-                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", i32 ").append(toInt(args[0])).append(")\n");
+                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", i32 ").append(iv).append(")\n");
             } else if ("print_nl".equals(sig.cName)) {
                 String fmt = pool.internFormat("\\0A");
                 declares.add("declare i32 @printf(ptr, ...)");
@@ -217,6 +224,11 @@ public final class MethodTranslator {
         if (!isStaticCall) {
             pop();
         }
+        if (m.owner.startsWith("java/") || m.owner.startsWith("javax/")) {
+            body.append("  ; unimplemented jdk call ").append(m.owner).append('.').append(m.name).append(m.desc).append('\n');
+            pushIntLit(0);
+            return;
+        }
         StringBuilder callArgs = new StringBuilder();
         for (int i = 0; i < kinds.size(); i++) {
             if (i > 0) {
@@ -230,10 +242,13 @@ public final class MethodTranslator {
         }
         String r = nv("r");
         body.append("  ").append(r).append(" = call i32 @").append(target).append("(").append(callArgs).append(")\n");
-        if ("V".equals(TypeUtil.returnKind(m.desc))) {
+        String rk = TypeUtil.returnKind(m.desc);
+        if ("V".equals(rk)) {
             pushIntLit(0);
+        } else if ("J".equals(rk)) {
+            fail("long/double returns are not supported yet: " + m.desc);
         } else {
-            push(r);
+            pushInt(r);
         }
     }
 
@@ -279,7 +294,7 @@ public final class MethodTranslator {
         String c = nv("c");
         body.append("  ").append(c).append(" = icmp ").append(pred).append(" i32 ").append(x).append(", 0\n");
         String t = label(j.label);
-        String f = nv("fall");
+        String f = "fall" + (tmp++);
         body.append("  br i1 ").append(c).append(", label %").append(t).append(", label %").append(f).append("\n");
         body.append(f).append(":\n");
         terminated = false;
@@ -299,9 +314,10 @@ public final class MethodTranslator {
         String c = nv("c");
         body.append("  ").append(c).append(" = icmp ").append(pred).append(" i32 ").append(a).append(", ").append(b).append("\n");
         String t = label(j.label);
-        String f = nv("fall");
+        String f = "fall" + (tmp++);
         body.append("  br i1 ").append(c).append(", label %").append(t).append(", label %").append(f).append("\n");
         body.append(f).append(":\n");
+        terminated = false;
     }
 
     private void pushIntLit(int v) {

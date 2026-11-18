@@ -40,7 +40,7 @@ public final class StringPool {
         if (raw) {
             for (int i = 0; i < value.length(); i++) {
                 char c = value.charAt(i);
-                if (c == '\\' && i + 3 < value.length()) {
+                if (c == '\\' && i + 3 <= value.length()) {
                     String hex = value.substring(i + 1, i + 3);
                     if (hex.matches("[0-9A-Fa-f]{2}")) {
                         bytes.append("\\").append(hex.toUpperCase());
@@ -78,7 +78,7 @@ public final class StringPool {
                 count++;
             }
         }
-        sb.append(count).append(" x i8] c\"").append(bytes).append("\\00\"\n");
+        sb.append(count + 1).append(" x i8] c\"").append(bytes).append("\\00\"\n");
         return sb.toString();
     }
 

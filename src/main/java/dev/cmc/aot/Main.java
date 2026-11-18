@@ -42,12 +42,14 @@ public final class Main {
         Set<String> declares = new LinkedHashSet<>();
         StringBuilder funcs = new StringBuilder();
         String entry = null;
+        List<String> entryArgs = List.of();
 
         for (ClassInfo c : classes) {
             for (MethodNode mn : c.methods()) {
                 funcs.append(MethodTranslator.translate(c, mn, pool, declares)).append('\n');
                 if ("main".equals(mn.name) && "([Ljava/lang/String;)V".equals(mn.desc) && ClassParser.isStatic(mn)) {
                     entry = ClassParser.mangle(c.name(), mn.name, mn.desc);
+                    entryArgs = TypeUtil.argKinds(mn.desc);
                 }
             }
         }
@@ -59,9 +61,16 @@ public final class Main {
             ir.append(d).append('\n');
         }
         ir.append('\n').append(funcs);
-        ir.append("define i32 @main() {\nentry:\n");
+        ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         if (entry != null) {
-            ir.append("  %r = call i32 @").append(entry).append("()\n");
+            StringBuilder callArgs = new StringBuilder();
+            for (int i = 0; i < entryArgs.size(); i++) {
+                if (i > 0) {
+                    callArgs.append(", ");
+                }
+                callArgs.append("I".equals(entryArgs.get(i)) ? "i32 0" : "i64 0");
+            }
+            ir.append("  %r = call i32 @").append(entry).append("(").append(callArgs).append(")\n");
         } else {
             ir.append("  %r = add i32 0, 0\n");
         }
