@@ -196,16 +196,29 @@ public final class MethodTranslator {
             case Opcodes.PUTFIELD -> putField((FieldInsnNode) insn);
             case Opcodes.GETSTATIC -> {
                 FieldInsnNode f = (FieldInsnNode) insn;
-                if (!Natives.isSystemOut(f.owner, f.name)) {
-                    fail("unsupported getstatic " + f.owner + "." + f.name);
+                if (Natives.isSystemOut(f.owner, f.name)) {
+                    pushIntLit(0);
+                } else {
+                    String label = staticLabel(f);
+                    String sv = nv("sv");
+                    body.append("  ").append(sv).append(" = load i64, ptr ").append(label).append("\n");
+                    push(sv);
                 }
-                pushIntLit(0);
+            }
+            case Opcodes.PUTSTATIC -> {
+                FieldInsnNode f = (FieldInsnNode) insn;
+                String sv = pop();
+                body.append("  store i64 ").append(sv).append(", ptr ").append(staticLabel(f)).append("\n");
             }
             case Opcodes.INVOKESTATIC -> invoke((MethodInsnNode) insn);
             case Opcodes.INVOKESPECIAL -> invokeSpecial((MethodInsnNode) insn);
             case Opcodes.INVOKEVIRTUAL -> invokeVirtual((MethodInsnNode) insn);
             default -> fail("unsupported opcode " + op + " in " + owner.name() + "." + mn.name);
         }
+    }
+
+    private String staticLabel(FieldInsnNode f) {
+        return layout.staticLabel(f);
     }
 
     private void newObject(TypeInsnNode tn) {

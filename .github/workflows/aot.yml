@@ -36,12 +36,14 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/hello.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/obj.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ArraysTest -o build/arr.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry StaticsTest -o build/st.ll
 
       - name: Verify IR is well formed
         run: |
           llvm-as build/hello.ll -o build/hello.bc
           llvm-as build/obj.ll -o build/obj.bc
           llvm-as build/arr.ll -o build/arr.bc
+          llvm-as build/st.ll -o build/st.bc
           echo IR_VERIFY_OK
 
       - name: Execute IR with lli
@@ -55,6 +57,9 @@ jobs:
           lli build/arr.bc > build/arr.txt
           printf '30\n5\n0\n42\n2\n' > build/arr.expected
           diff build/arr.expected build/arr.txt && echo ARRAYS_OK
+          lli build/st.bc > build/st.txt
+          printf '7\n12\n48\n212\n' > build/st.expected
+          diff build/st.expected build/st.txt && echo STATICS_OK
 
       - name: Compile with clang
         run: |

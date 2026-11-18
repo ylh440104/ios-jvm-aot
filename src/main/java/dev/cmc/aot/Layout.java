@@ -1,5 +1,6 @@
 package dev.cmc.aot;
 
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ public final class Layout {
     private final Map<String, Integer> slots = new LinkedHashMap<>();
     private final List<String> slotKeys = new ArrayList<>();
     private final Map<String, Integer> vtableIndex = new HashMap<>();
+    private final Map<String, String> staticFields = new LinkedHashMap<>();
 
     private Layout() {
     }
@@ -152,6 +154,20 @@ public final class Layout {
 
     public String vtableLabel(String cls) {
         return "@vtable_" + ClassParser.mangle(cls, "v", "()V");
+    }
+
+    public String staticLabel(FieldInsnNode f) {
+        String key = "@st_" + ClassParser.mangle(f.owner, f.name, f.desc);
+        staticFields.computeIfAbsent(key, k -> k);
+        return key;
+    }
+
+    public String renderStatics() {
+        StringBuilder sb = new StringBuilder();
+        for (String key : staticFields.keySet()) {
+            sb.append(key).append(" = global i64 0\n");
+        }
+        return sb.toString();
     }
 
     public String resolveImplementation(String cls, String name, String desc) {
