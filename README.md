@@ -29,15 +29,27 @@ Minecraft 1.20.5+ needs Java 21 bytecode (major 65) plus the Java 21 class libra
 
 ## Current state
 
-Stage 0, the link is proven end to end:
+Stage 0, 1 and 2 pass with byte-exact output checks in CI.
 
-- static and instance methods
-- int parameters and int returns
-- locals, operand stack, branches, loops
+Supported:
+
+- static and instance methods, int parameters and returns
+- locals, operand stack, branches, loops, `iinc`
+- objects: header with vtable pointer, field offsets across the inheritance chain
+- constructors including `super(...)` chaining
+- virtual dispatch through vtable slots with correct override resolution
+- arrays: `new int[]`, `new T[]`, `length`, element load/store, zero initialisation
 - string constants, `System.out.println` for String and int
 - `Math.abs` / `max` / `min`
 
-Not there yet: objects, arrays, exceptions, GC, threads, the Java class library, LWJGL.
+Verified behaviour:
+
+```
+7  14  25  49  1     object fields, super ctor, vtable override, inherited dispatch
+30  5  0  42  2      int arrays, length, default zero, object arrays
+```
+
+Not there yet: exceptions, GC, threads, String objects, the Java class library, LWJGL.
 
 ## Build
 

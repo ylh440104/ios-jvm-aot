@@ -182,6 +182,16 @@ public final class MethodTranslator {
                 push(v);
             }
             case Opcodes.NEW -> newObject((TypeInsnNode) insn);
+            case Opcodes.NEWARRAY, Opcodes.ANEWARRAY -> newArray(insn);
+            case Opcodes.ARRAYLENGTH -> {
+                String av = pop();
+                String ap = toPtr(av);
+                String len = nv("al");
+                body.append("  ").append(len).append(" = load i64, ptr ").append(ap).append("\n");
+                push(len);
+            }
+            case Opcodes.IALOAD, Opcodes.BALOAD, Opcodes.CALOAD, Opcodes.SALOAD, Opcodes.AALOAD -> arrayLoad();
+            case Opcodes.IASTORE, Opcodes.BASTORE, Opcodes.CASTORE, Opcodes.SASTORE, Opcodes.AASTORE -> arrayStore();
             case Opcodes.GETFIELD -> getField((FieldInsnNode) insn);
             case Opcodes.PUTFIELD -> putField((FieldInsnNode) insn);
             case Opcodes.GETSTATIC -> {
@@ -211,6 +221,52 @@ public final class MethodTranslator {
         String iv = nv("nv");
         body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
         push(iv);
+    }
+
+    private void newArray(AbstractInsnNode insn) {
+        String cnt = popInt();
+        declares.add("declare ptr @calloc(i64, i64)");
+        String c64 = nv("an");
+        body.append("  ").append(c64).append(" = sext i32 ").append(cnt).append(" to i64\n");
+        String bytes = nv("ab");
+        body.append("  ").append(bytes).append(" = mul i64 ").append(c64).append(", 8\n");
+        String total = nv("ab");
+        body.append("  ").append(total).append(" = add i64 ").append(bytes).append(", 8\n");
+        String raw = nv("ap");
+        body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(total).append(", i64 1)\n");
+        body.append("  store i64 ").append(c64).append(", ptr ").append(raw).append("\n");
+        String iv = nv("av");
+        body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
+        push(iv);
+    }
+
+    private void arrayLoad() {
+        String idx = popInt();
+        String av = pop();
+        String ap = toPtr(av);
+        String i64 = nv("ai");
+        body.append("  ").append(i64).append(" = sext i32 ").append(idx).append(" to i64\n");
+        String off = nv("ao");
+        body.append("  ").append(off).append(" = add i64 ").append(i64).append(", 1\n");
+        String ep = nv("aep");
+        body.append("  ").append(ep).append(" = getelementptr i64, ptr ").append(ap).append(", i64 ").append(off).append("\n");
+        String va = nv("aev");
+        body.append("  ").append(va).append(" = load i64, ptr ").append(ep).append("\n");
+        push(va);
+    }
+
+    private void arrayStore() {
+        String val = pop();
+        String idx = popInt();
+        String av = pop();
+        String ap = toPtr(av);
+        String i64 = nv("ai");
+        body.append("  ").append(i64).append(" = sext i32 ").append(idx).append(" to i64\n");
+        String off = nv("ao");
+        body.append("  ").append(off).append(" = add i64 ").append(i64).append(", 1\n");
+        String ep = nv("aep");
+        body.append("  ").append(ep).append(" = getelementptr i64, ptr ").append(ap).append(", i64 ").append(off).append("\n");
+        body.append("  store i64 ").append(val).append(", ptr ").append(ep).append("\n");
     }
 
     private void getField(FieldInsnNode f) {

@@ -35,13 +35,13 @@ jobs:
         run: |
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/hello.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/obj.ll
-          echo '--- head of obj IR ---'
-          head -20 build/obj.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ArraysTest -o build/arr.ll
 
       - name: Verify IR is well formed
         run: |
           llvm-as build/hello.ll -o build/hello.bc
           llvm-as build/obj.ll -o build/obj.bc
+          llvm-as build/arr.ll -o build/arr.bc
           echo IR_VERIFY_OK
 
       - name: Execute IR with lli
@@ -52,13 +52,16 @@ jobs:
           lli build/obj.bc > build/obj.txt
           printf '7\n14\n25\n49\n1\n' > build/obj.expected
           diff build/obj.expected build/obj.txt && echo OBJECTS_OK
+          lli build/arr.bc > build/arr.txt
+          printf '30\n5\n0\n42\n2\n' > build/arr.expected
+          diff build/arr.expected build/arr.txt && echo ARRAYS_OK
 
       - name: Compile with clang
         run: |
-          clang -O1 build/hello.ll -o build/hello-bin
-          ./build/hello-bin
-          clang -O1 build/obj.ll -o build/obj-bin
-          ./build/obj-bin
+          for t in hello obj arr; do
+            clang -O1 build/$t.ll -o build/$t-bin
+            ./build/$t-bin
+          done
 
   ios:
     if: github.event_name == 'workflow_dispatch'
