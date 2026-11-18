@@ -3,14 +3,17 @@ package dev.cmc.aot;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeInsnNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -23,45 +26,57 @@ public final class MethodTranslator {
     private final MethodNode mn;
     private final StringPool pool;
     private final Set<String> declares;
+    private final Layout layout;
+    private final int localsSize;
     private final StringBuilder body = new StringBuilder();
-    private final java.util.IdentityHashMap<LabelNode, String> labels = new java.util.IdentityHashMap<>();
+    private final IdentityHashMap<LabelNode, String> labels = new IdentityHashMap<>();
     private int tmp;
     private int labelSeq;
     private boolean terminated;
 
-    private MethodTranslator(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares) {
+    private MethodTranslator(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares, Layout layout) {
         this.owner = owner;
         this.mn = mn;
         this.pool = pool;
         this.declares = declares;
+        this.layout = layout;
+        this.localsSize = Math.max(mn.maxLocals, 1);
     }
 
-    public static String translate(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares) {
-        MethodTranslator t = new MethodTranslator(owner, mn, pool, declares);
-        return t.run();
+    public static String translate(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares, Layout layout) {
+        return new MethodTranslator(owner, mn, pool, declares, layout).run();
     }
 
     private String run() {
-        int locals = Math.max(mn.maxLocals, 1);
+        boolean isInstance = !ClassParser.isStatic(mn);
         List<String> argKinds = TypeUtil.argKinds(mn.desc);
         StringBuilder sig = new StringBuilder();
+        if (isInstance) {
+            sig.append("ptr %this");
+        }
         for (int i = 0; i < argKinds.size(); i++) {
-            if (i > 0) {
+            if (sig.length() > 0) {
                 sig.append(", ");
             }
             sig.append("I".equals(argKinds.get(i)) ? "i32" : "i64").append(" %a").append(i);
         }
         body.append("define i32 @").append(ClassParser.mangle(owner.name(), mn.name, mn.desc)).append("(").append(sig).append(") {\n");
         body.append("entry:\n");
-        body.append("  %locals = alloca [").append(locals).append(" x i64]\n");
+        body.append("  %locals = alloca [").append(localsSize).append(" x i64]\n");
         body.append("  %stack = alloca [").append(STACK_SLOTS).append(" x i64]\n");
         body.append("  %sp = alloca i32\n");
         body.append("  store i32 0, ptr %sp\n");
 
-        int slot = ClassParser.isStatic(mn) ? 0 : 1;
+        int slot = 0;
+        if (isInstance) {
+            String tp = localPtr(0);
+            String tv = nv("this");
+            body.append("  ").append(tv).append(" = ptrtoint ptr %this to i64\n");
+            body.append("  store i64 ").append(tv).append(", ptr ").append(tp).append("\n");
+            slot = 1;
+        }
         for (int i = 0; i < argKinds.size(); i++) {
-            String p = nv("lp");
-            body.append("  ").append(p).append(" = getelementptr [").append(locals).append(" x i64], ptr %locals, i64 0, i32 ").append(slot).append("\n");
+            String p = localPtr(slot);
             if ("I".equals(argKinds.get(i))) {
                 String e = nv("e");
                 body.append("  ").append(e).append(" = sext i32 %a").append(i).append(" to i64\n");
@@ -130,8 +145,10 @@ public final class MethodTranslator {
             }
             case Opcodes.ILOAD -> pushIntFromLocal(((VarInsnNode) insn).var);
             case Opcodes.ISTORE -> storeLocal(((VarInsnNode) insn).var);
+            case Opcodes.ALOAD -> pushRefFromLocal(((VarInsnNode) insn).var);
+            case Opcodes.ASTORE -> storeLocal(((VarInsnNode) insn).var);
             case Opcodes.IINC -> {
-                org.objectweb.asm.tree.IincInsnNode inc = (org.objectweb.asm.tree.IincInsnNode) insn;
+                IincInsnNode inc = (IincInsnNode) insn;
                 String p = localPtr(inc.var);
                 String old = nv("iv");
                 body.append("  ").append(old).append(" = load i64, ptr ").append(p).append("\n");
@@ -143,8 +160,6 @@ public final class MethodTranslator {
                 body.append("  ").append(n64).append(" = sext i32 ").append(n32).append(" to i64\n");
                 body.append("  store i64 ").append(n64).append(", ptr ").append(p).append("\n");
             }
-            case Opcodes.ALOAD -> loadLocal(((VarInsnNode) insn).var);
-            case Opcodes.ASTORE -> storeLocal(((VarInsnNode) insn).var);
             case Opcodes.IADD, Opcodes.ISUB, Opcodes.IMUL, Opcodes.IAND, Opcodes.IOR, Opcodes.IXOR -> arith(op);
             case Opcodes.IDIV, Opcodes.IREM -> divRem(op);
             case Opcodes.INEG -> {
@@ -166,6 +181,9 @@ public final class MethodTranslator {
                 push(v);
                 push(v);
             }
+            case Opcodes.NEW -> newObject((TypeInsnNode) insn);
+            case Opcodes.GETFIELD -> getField((FieldInsnNode) insn);
+            case Opcodes.PUTFIELD -> putField((FieldInsnNode) insn);
             case Opcodes.GETSTATIC -> {
                 FieldInsnNode f = (FieldInsnNode) insn;
                 if (!Natives.isSystemOut(f.owner, f.name)) {
@@ -173,73 +191,141 @@ public final class MethodTranslator {
                 }
                 pushIntLit(0);
             }
-            case Opcodes.INVOKEVIRTUAL, Opcodes.INVOKESTATIC, Opcodes.INVOKESPECIAL -> invoke((MethodInsnNode) insn);
+            case Opcodes.INVOKESTATIC -> invoke((MethodInsnNode) insn);
+            case Opcodes.INVOKESPECIAL -> invokeSpecial((MethodInsnNode) insn);
+            case Opcodes.INVOKEVIRTUAL -> invokeVirtual((MethodInsnNode) insn);
             default -> fail("unsupported opcode " + op + " in " + owner.name() + "." + mn.name);
+        }
+    }
+
+    private void newObject(TypeInsnNode tn) {
+        String cls = tn.desc;
+        if (!layout.hasClass(cls)) {
+            fail("unknown class for new: " + cls);
+        }
+        declares.add("declare ptr @calloc(i64, i64)");
+        int size = layout.objectSize(cls);
+        String raw = nv("np");
+        body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(size).append(", i64 1)\n");
+        body.append("  store ptr ").append(layout.vtableLabel(cls)).append(", ptr ").append(raw).append("\n");
+        String iv = nv("nv");
+        body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
+        push(iv);
+    }
+
+    private void getField(FieldInsnNode f) {
+        String objv = pop();
+        String objp = toPtr(objv);
+        int off = layout.fieldOffset(f.owner, f.name);
+        String fp = nv("fp");
+        body.append("  ").append(fp).append(" = getelementptr i8, ptr ").append(objp).append(", i32 ").append(off).append("\n");
+        String val = nv("fv");
+        body.append("  ").append(val).append(" = load i64, ptr ").append(fp).append("\n");
+        push(val);
+    }
+
+    private void putField(FieldInsnNode f) {
+        String val = pop();
+        String objv = pop();
+        String objp = toPtr(objv);
+        int off = layout.fieldOffset(f.owner, f.name);
+        String fp = nv("fp");
+        body.append("  ").append(fp).append(" = getelementptr i8, ptr ").append(objp).append(", i32 ").append(off).append("\n");
+        body.append("  store i64 ").append(val).append(", ptr ").append(fp).append("\n");
+    }
+
+    private void invokeSpecial(MethodInsnNode m) {
+        Natives.Sig sig = Natives.lookup(m.owner, m.name, m.desc);
+        if (sig != null) {
+            invoke(m);
+            return;
+        }
+        List<String> kinds = TypeUtil.argKinds(m.desc);
+        String[] raw = new String[kinds.size()];
+        for (int i = kinds.size() - 1; i >= 0; i--) {
+            raw[i] = pop();
+        }
+        String objv = pop();
+        if (m.owner.startsWith("java/")) {
+            body.append("  ; unimplemented jdk ctor ").append(m.owner).append('.').append(m.name).append("\n");
+            return;
+        }
+        String objp = toPtr(objv);
+        StringBuilder callArgs = new StringBuilder("ptr ").append(objp);
+        for (int i = 0; i < kinds.size(); i++) {
+            callArgs.append(", ");
+            if ("I".equals(kinds.get(i))) {
+                callArgs.append("i32 ").append(toInt(raw[i]));
+            } else {
+                callArgs.append("i64 ").append(raw[i]);
+            }
+        }
+        String r = nv("r");
+        body.append("  ").append(r).append(" = call i32 @").append(ClassParser.mangle(m.owner, m.name, m.desc)).append("(").append(callArgs).append(")\n");
+        if (!"V".equals(TypeUtil.returnKind(m.desc))) {
+            pushInt(r);
+        }
+    }
+
+    private void invokeVirtual(MethodInsnNode m) {
+        Natives.Sig sig = Natives.lookup(m.owner, m.name, m.desc);
+        if (sig != null) {
+            invoke(m);
+            return;
+        }
+        List<String> kinds = TypeUtil.argKinds(m.desc);
+        String[] raw = new String[kinds.size()];
+        for (int i = kinds.size() - 1; i >= 0; i--) {
+            raw[i] = pop();
+        }
+        String objv = pop();
+        if (m.owner.startsWith("java/")) {
+            body.append("  ; unimplemented jdk virtual ").append(m.owner).append('.').append(m.name).append("\n");
+            if (!"V".equals(TypeUtil.returnKind(m.desc))) {
+                pushIntLit(0);
+            }
+            return;
+        }
+        String objp = toPtr(objv);
+        int slot = layout.slotOf(m.name, m.desc);
+        String vtp = nv("vt");
+        body.append("  ").append(vtp).append(" = load ptr, ptr ").append(objp).append("\n");
+        String fpp = nv("vf");
+        body.append("  ").append(fpp).append(" = getelementptr ptr, ptr ").append(vtp).append(", i32 ").append(slot).append("\n");
+        String fnp = nv("fn");
+        body.append("  ").append(fnp).append(" = load ptr, ptr ").append(fpp).append("\n");
+        StringBuilder callArgs = new StringBuilder("ptr ").append(objp);
+        for (int i = 0; i < kinds.size(); i++) {
+            callArgs.append(", ");
+            if ("I".equals(kinds.get(i))) {
+                callArgs.append("i32 ").append(toInt(raw[i]));
+            } else {
+                callArgs.append("i64 ").append(raw[i]);
+            }
+        }
+        String r = nv("r");
+        body.append("  ").append(r).append(" = call i32 ").append(fnp).append("(").append(callArgs).append(")\n");
+        if (!"V".equals(TypeUtil.returnKind(m.desc))) {
+            pushInt(r);
         }
     }
 
     private void invoke(MethodInsnNode m) {
         Natives.Sig sig = Natives.lookup(m.owner, m.name, m.desc);
         if (sig != null) {
-            String[] args = new String[sig.argCount];
-            for (int i = sig.argCount - 1; i >= 0; i--) {
-                args[i] = pop();
-            }
-            if ("print_str".equals(sig.cName) || "print_str_raw".equals(sig.cName)) {
-                if ("print_str".equals(sig.cName)) {
-                    String pv = toPtr(args[0]);
-                    declares.add("declare i32 @puts(ptr)");
-                    body.append("  ").append(nv("r")).append(" = call i32 @puts(ptr ").append(pv).append(")\n");
-                } else {
-                    String fmt = pool.internFormat("%s");
-                    String pv = toPtr(args[0]);
-                    declares.add("declare i32 @printf(ptr, ...)");
-                    body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(pv).append(")\n");
-                }
-            } else if ("print_int".equals(sig.cName) || "print_int_raw".equals(sig.cName)) {
-                String fmt = pool.internFormat("print_int".equals(sig.cName) ? "%d\\0A" : "%d");
-                String iv = toInt(args[0]);
-                declares.add("declare i32 @printf(ptr, ...)");
-                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", i32 ").append(iv).append(")\n");
-            } else if ("print_nl".equals(sig.cName)) {
-                String fmt = pool.internFormat("\\0A");
-                declares.add("declare i32 @printf(ptr, ...)");
-                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(")\n");
-            } else if ("math_abs".equals(sig.cName)) {
-                String x = toInt(args[0]);
-                String neg = nv("v");
-                body.append("  ").append(neg).append(" = sub i32 0, ").append(x).append("\n");
-                String c = nv("c");
-                body.append("  ").append(c).append(" = icmp slt i32 ").append(x).append(", 0\n");
-                String r = nv("v");
-                body.append("  ").append(r).append(" = select i1 ").append(c).append(", i32 ").append(neg).append(", i32 ").append(x).append("\n");
-                pushInt(r);
-            } else if ("math_max".equals(sig.cName) || "math_min".equals(sig.cName)) {
-                String a = toInt(args[0]);
-                String b = toInt(args[1]);
-                String c = nv("c");
-                body.append("  ").append(c).append(" = icmp ").append("math_max".equals(sig.cName) ? "sgt" : "slt").append(" i32 ").append(a).append(", ").append(b).append("\n");
-                String r = nv("v");
-                body.append("  ").append(r).append(" = select i1 ").append(c).append(", i32 ").append(a).append(", i32 ").append(b).append("\n");
-                pushInt(r);
-            } else {
-                fail("unregistered native " + sig.cName);
-            }
+            invokeNative(sig, m);
             return;
         }
-        String target = ClassParser.mangle(m.owner, m.name, m.desc);
         List<String> kinds = TypeUtil.argKinds(m.desc);
         String[] raw = new String[kinds.size()];
         for (int i = kinds.size() - 1; i >= 0; i--) {
             raw[i] = pop();
         }
-        boolean isStaticCall = m.getOpcode() == Opcodes.INVOKESTATIC;
-        if (!isStaticCall) {
-            pop();
-        }
         if (m.owner.startsWith("java/") || m.owner.startsWith("javax/")) {
             body.append("  ; unimplemented jdk call ").append(m.owner).append('.').append(m.name).append(m.desc).append('\n');
-            pushIntLit(0);
+            if (!"V".equals(TypeUtil.returnKind(m.desc))) {
+                pushIntLit(0);
+            }
             return;
         }
         StringBuilder callArgs = new StringBuilder();
@@ -254,14 +340,64 @@ public final class MethodTranslator {
             }
         }
         String r = nv("r");
-        body.append("  ").append(r).append(" = call i32 @").append(target).append("(").append(callArgs).append(")\n");
+        body.append("  ").append(r).append(" = call i32 @").append(ClassParser.mangle(m.owner, m.name, m.desc)).append("(").append(callArgs).append(")\n");
         String rk = TypeUtil.returnKind(m.desc);
         if ("V".equals(rk)) {
-            pushIntLit(0);
-        } else if ("J".equals(rk)) {
+            return;
+        }
+        if ("J".equals(rk)) {
             fail("long/double returns are not supported yet: " + m.desc);
-        } else {
+        }
+        pushInt(r);
+    }
+
+    private void invokeNative(Natives.Sig sig, MethodInsnNode m) {
+        String[] args = new String[sig.argCount];
+        for (int i = sig.argCount - 1; i >= 0; i--) {
+            args[i] = pop();
+        }
+        boolean isStaticCall = m.getOpcode() == Opcodes.INVOKESTATIC;
+        if (!isStaticCall) {
+            pop();
+        }
+        if ("print_str".equals(sig.cName) || "print_str_raw".equals(sig.cName)) {
+            String pv = toPtr(args[0]);
+            if ("print_str".equals(sig.cName)) {
+                declares.add("declare i32 @puts(ptr)");
+                body.append("  ").append(nv("r")).append(" = call i32 @puts(ptr ").append(pv).append(")\n");
+            } else {
+                String fmt = pool.internFormat("%s");
+                declares.add("declare i32 @printf(ptr, ...)");
+                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(pv).append(")\n");
+            }
+        } else if ("print_int".equals(sig.cName) || "print_int_raw".equals(sig.cName)) {
+            String fmt = pool.internFormat("print_int".equals(sig.cName) ? "%d\\0A" : "%d");
+            String iv = toInt(args[0]);
+            declares.add("declare i32 @printf(ptr, ...)");
+            body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", i32 ").append(iv).append(")\n");
+        } else if ("print_nl".equals(sig.cName)) {
+            String fmt = pool.internFormat("\\0A");
+            declares.add("declare i32 @printf(ptr, ...)");
+            body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(")\n");
+        } else if ("math_abs".equals(sig.cName)) {
+            String x = toInt(args[0]);
+            String neg = nv("v");
+            body.append("  ").append(neg).append(" = sub i32 0, ").append(x).append("\n");
+            String c = nv("c");
+            body.append("  ").append(c).append(" = icmp slt i32 ").append(x).append(", 0\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = select i1 ").append(c).append(", i32 ").append(neg).append(", i32 ").append(x).append("\n");
             pushInt(r);
+        } else if ("math_max".equals(sig.cName) || "math_min".equals(sig.cName)) {
+            String a = toInt(args[0]);
+            String b = toInt(args[1]);
+            String c = nv("c");
+            body.append("  ").append(c).append(" = icmp ").append("math_max".equals(sig.cName) ? "sgt" : "slt").append(" i32 ").append(a).append(", ").append(b).append("\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = select i1 ").append(c).append(", i32 ").append(a).append(", i32 ").append(b).append("\n");
+            pushInt(r);
+        } else {
+            fail("unregistered native " + sig.cName);
         }
     }
 
@@ -357,9 +493,13 @@ public final class MethodTranslator {
         pushInt(t);
     }
 
+    private void pushRefFromLocal(int idx) {
+        push(loadLocal(idx));
+    }
+
     private String localPtr(int idx) {
         String p = nv("lp");
-        body.append("  ").append(p).append(" = getelementptr [").append(Math.max(mn.maxLocals, 1)).append(" x i64], ptr %locals, i64 0, i32 ").append(idx).append("\n");
+        body.append("  ").append(p).append(" = getelementptr [").append(localsSize).append(" x i64], ptr %locals, i64 0, i32 ").append(idx).append("\n");
         return p;
     }
 

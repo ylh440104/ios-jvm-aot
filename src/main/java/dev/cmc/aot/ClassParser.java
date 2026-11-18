@@ -1,7 +1,9 @@
 package dev.cmc.aot;
 
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.util.ArrayList;
@@ -21,11 +23,24 @@ public final class ClassParser {
                 methods.add(mn);
             }
         }
-        return new ClassInfo(node.name, node.superName, methods);
+        List<FieldInfo> fields = new ArrayList<>();
+        for (FieldNode fn : node.fields) {
+            boolean isStatic = (fn.access & Opcodes.ACC_STATIC) != 0;
+            fields.add(new FieldInfo(fn.name, fn.desc, isStatic));
+        }
+        return new ClassInfo(node.name, node.superName, methods, fields);
     }
 
     public static boolean isStatic(MethodNode mn) {
-        return (mn.access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0;
+        return (mn.access & Opcodes.ACC_STATIC) != 0;
+    }
+
+    public static boolean isPrivate(MethodNode mn) {
+        return (mn.access & Opcodes.ACC_PRIVATE) != 0;
+    }
+
+    public static boolean isCtor(String name) {
+        return "<init>".equals(name);
     }
 
     public static String mangle(String owner, String name, String desc) {
