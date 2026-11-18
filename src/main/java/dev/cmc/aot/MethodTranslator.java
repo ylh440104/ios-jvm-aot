@@ -178,7 +178,7 @@ public final class MethodTranslator {
                     body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(toPtr(args[0])).append(")\n");
                 }
             } else if ("print_int".equals(sig.cName) || "print_int_raw".equals(sig.cName)) {
-                String fmt = pool.internFormat(if ("print_int".equals(sig.cName)) "%d\\0A" else "%d");
+                String fmt = pool.internFormat("print_int".equals(sig.cName) ? "%d\\0A" : "%d");
                 declares.add("declare i32 @printf(ptr, ...)");
                 body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", i32 ").append(toInt(args[0])).append(")\n");
             } else if ("print_nl".equals(sig.cName)) {
