@@ -72,7 +72,7 @@ public final class Layout {
         StringBuilder vals = new StringBuilder();
         java.util.Set<Integer> marked = new java.util.HashSet<>();
         for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
-            if (fieldChain(e.getKey()).contains(target)) {
+            if (ancestryOf(e.getKey()).contains(target)) {
                 marked.add(e.getValue());
             }
         }
@@ -87,6 +87,29 @@ public final class Layout {
         pendingTables.append(label).append(" = private unnamed_addr constant [").append(slots)
             .append(" x i32] [").append(vals).append("]\n");
         return label;
+    }
+
+    private final Map<String, java.util.Set<String>> ancestryCache = new java.util.HashMap<>();
+
+    private java.util.Set<String> ancestryOf(String cls) {
+        java.util.Set<String> cached = ancestryCache.get(cls);
+        if (cached != null) {
+            return cached;
+        }
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        String cur = cls;
+        while (cur != null) {
+            if (!out.add(cur)) {
+                break;
+            }
+            ClassInfo c = classes.get(cur);
+            if (c == null) {
+                break;
+            }
+            cur = c.superName();
+        }
+        ancestryCache.put(cls, out);
+        return out;
     }
 
     private final StringBuilder pendingTables = new StringBuilder();
@@ -191,6 +214,10 @@ public final class Layout {
     }
 
     public boolean hasClass(String name) {
+        return classes.containsKey(name);
+    }
+
+    public boolean knownType(String name) {
         return classes.containsKey(name);
     }
 

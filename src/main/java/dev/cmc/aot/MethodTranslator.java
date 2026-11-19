@@ -50,6 +50,9 @@ public final class MethodTranslator {
     private int tmp;
     private int labelSeq;
     private boolean terminated;
+    private String handlerDispatch;
+    private String dispatchCode;
+    private final List<String> handlerLabels = new ArrayList<>();
 
     private MethodTranslator(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares, Layout layout, Frame<BasicValue>[] frames) {
         this.owner = owner;
@@ -123,6 +126,7 @@ public final class MethodTranslator {
         }
 
         InsnList insns = mn.instructions;
+        buildHandlers();
         for (AbstractInsnNode insn = insns.getFirst(); insn != null; insn = insn.getNext()) {
             insnIndex = insns.indexOf(insn);
             if (terminated && !(insn instanceof LabelNode)) {
@@ -135,6 +139,10 @@ public final class MethodTranslator {
         if (!terminated) {
             body.append("  ret ").append(retType).append(" ").append("i32".equals(retType) ? "0" : "0").append("\n");
         }
+        if (dispatchCode != null) {
+            body.append(dispatchCode);
+        }
+        emitHandlerEntries();
         body.append("}\n");
         return body.toString();
     }
@@ -459,6 +467,8 @@ public final class MethodTranslator {
                 pushSlot(b);
                 pushSlot(a);
             }
+            case Opcodes.ATHROW -> aThrow();
+            case Opcodes.MONITORENTER, Opcodes.MONITOREXIT -> pop();
             case Opcodes.CHECKCAST -> checkCast((TypeInsnNode) insn);
             case Opcodes.INSTANCEOF -> instanceOf((TypeInsnNode) insn);
             case Opcodes.NEW -> newObject((TypeInsnNode) insn);
@@ -505,6 +515,119 @@ public final class MethodTranslator {
 
     private String staticLabel(FieldInsnNode f) {
         return layout.staticLabel(f);
+    }
+
+    private void aThrow() {
+        String ev = popRef();
+        body.append("  store i64 ").append(ev).append(", ptr @.pending_exc\n");
+        emitUnwind();
+    }
+
+    private void buildHandlers() {
+        if (mn.tryCatchBlocks == null || mn.tryCatchBlocks.isEmpty()) {
+            return;
+        }
+        handlerLabels.clear();
+        String dispatch = "excd" + (tmp++);
+        for (int i = 0; i < mn.tryCatchBlocks.size(); i++) {
+            String hl = "exch" + (tmp++);
+            handlerLabels.add(hl);
+        }
+        handlerDispatch = dispatch;
+        StringBuilder out = new StringBuilder();
+        out.append(dispatch).append(":\n");
+        String pe = nv("pe");
+        out.append("  ").append(pe).append(" = load i64, ptr @.pending_exc\n");
+        String op = nv("pe");
+        out.append("  ").append(op).append(" = inttoptr i64 ").append(pe).append(" to ptr\n");
+        String tp = nv("pe");
+        out.append("  ").append(tp).append(" = getelementptr i8, ptr ").append(op).append(", i32 8\n");
+        String tid = nv("pe");
+        out.append("  ").append(tid).append(" = load i32, ptr ").append(tp).append("\n");
+        for (int i = 0; i < mn.tryCatchBlocks.size(); i++) {
+            org.objectweb.asm.tree.TryCatchBlockNode tcb = mn.tryCatchBlocks.get(i);
+            String ht = tcb.type;
+            String cond;
+            if (ht == null) {
+                cond = null;
+            } else {
+                String idx = typeIndex(ht);
+                String base = nv("pe");
+                out.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots())
+                    .append(" x i32], ptr ").append(idx).append(", i64 0, i32 0\n");
+                String cell = nv("pe");
+                out.append("  ").append(cell).append(" = getelementptr i32, ptr ").append(base).append(", i32 ").append(tid).append("\n");
+                String ok = nv("pe");
+                out.append("  ").append(ok).append(" = load i32, ptr ").append(cell).append("\n");
+                String nzc = nv("pe");
+                out.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
+                cond = nzc;
+            }
+            String next = "exdn" + (tmp++);
+            if (cond == null) {
+                out.append("  br label %").append(handlerLabels.get(i)).append("\n");
+            } else {
+                out.append("  br i1 ").append(cond).append(", label %").append(handlerLabels.get(i))
+                    .append(", label %").append(next).append("\n");
+                out.append(next).append(":\n");
+            }
+        }
+        out.append("  ret i32 0\n");
+        dispatchCode = out.toString();
+    }
+
+    private void emitHandlerEntries() {
+        if (handlerLabels.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < mn.tryCatchBlocks.size(); i++) {
+            org.objectweb.asm.tree.TryCatchBlockNode tcb = mn.tryCatchBlocks.get(i);
+            body.append(handlerLabels.get(i)).append(":\n");
+            String pe = nv("pe");
+            body.append("  ").append(pe).append(" = load i64, ptr @.pending_exc\n");
+            body.append("  store i64 0, ptr @.pending_exc\n");
+            String sp = nv("pe");
+            body.append("  ").append(sp).append(" = load i32, ptr %sp\n");
+            String cz = nv("pe");
+            body.append("  ").append(cz).append(" = icmp sgt i32 ").append(sp).append(", 0\n");
+            String zbr = "excz" + (tmp++);
+            String zdone = "exczd" + (tmp++);
+            body.append("  br i1 ").append(cz).append(", label %").append(zbr).append(", label %").append(zdone).append("\n");
+            body.append(zbr).append(":\n  store i32 0, ptr %sp\n  br label %").append(zdone).append("\n");
+            body.append(zdone).append(":\n");
+            stack.clear();
+            pushRef(pe);
+            String target = label(tcb.handler);
+            body.append("  br label %").append(target).append("\n");
+        }
+    }
+
+    private void emitUnwind() {
+        if (handlerDispatch != null) {
+            body.append("  br label %").append(handlerDispatch).append("\n");
+            terminated = true;
+            return;
+        }
+        body.append("  ret i32 0\n");
+        terminated = true;
+    }
+
+    private String currentHandler() {
+        return handlerDispatch;
+    }
+
+    private void emitCallUnwind() {
+        String lbl = "excchk" + (tmp++);
+        String ok = "excok" + (tmp++);
+        String pend = nv("pe");
+        body.append("  ").append(pend).append(" = load i64, ptr @.pending_exc\n");
+        String nz = nv("pe");
+        body.append("  ").append(nz).append(" = icmp ne i64 ").append(pend).append(", 0\n");
+        body.append("  br i1 ").append(nz).append(", label %").append(lbl).append(", label %").append(ok).append("\n");
+        body.append(lbl).append(":\n");
+        emitUnwind();
+        body.append(ok).append(":\n");
+        terminated = false;
     }
 
     private String intArithLlvm(int op) {
@@ -658,7 +781,7 @@ public final class MethodTranslator {
     private void checkCast(TypeInsnNode tn) {
         Slot s = popSlot();
         String target = tn.desc;
-        if (!layout.hasClass(target)) {
+        if (!layout.knownType(target)) {
             pushSlot(s);
             return;
         }
@@ -700,7 +823,7 @@ public final class MethodTranslator {
     private void instanceOf(TypeInsnNode tn) {
         Slot s = popSlot();
         String target = tn.desc;
-        if (!layout.hasClass(target)) {
+        if (!layout.knownType(target)) {
             pushIntLit(0);
             return;
         }
@@ -923,6 +1046,7 @@ public final class MethodTranslator {
         String r = nv("r");
         body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" @")
             .append(ClassParser.mangle(m.owner, m.name, m.desc)).append("(").append(callArgs).append(")\n");
+        emitCallUnwind();
         pushReturnValue(m.desc, r);
     }
 
@@ -959,6 +1083,7 @@ public final class MethodTranslator {
         }
         String r = nv("r");
         body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" ").append(fnp).append("(").append(callArgs).append(")\n");
+        emitCallUnwind();
         pushReturnValue(m.desc, r);
     }
 
@@ -988,6 +1113,7 @@ public final class MethodTranslator {
         String r = nv("r");
         body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" @")
             .append(ClassParser.mangle(m.owner, m.name, m.desc)).append("(").append(callArgs).append(")\n");
+        emitCallUnwind();
         pushReturnValue(m.desc, r);
     }
 
@@ -1301,24 +1427,24 @@ public final class MethodTranslator {
     }
 
     private void storeLocal(int idx, boolean wide) {
-        Slot s = popSlot();
+        String k = stack.isEmpty() ? stackKindAt(0) : stack.get(stack.size() - 1).kind;
+        Slot raw = popSlot();
+        String s = raw.value;
         String v64;
-        if ("I".equals(s.kind)) {
+        if ("I".equals(k)) {
             String t = nv("s");
-            body.append("  ").append(t).append(" = trunc i64 ").append(s.value).append(" to i32\n");
+            body.append("  ").append(t).append(" = trunc i64 ").append(s).append(" to i32\n");
             String e = nv("s");
             body.append("  ").append(e).append(" = sext i32 ").append(t).append(" to i64\n");
             v64 = e;
-        } else if ("F".equals(s.kind)) {
+        } else if ("F".equals(k)) {
             String back = nv("s");
-            body.append("  ").append(back).append(" = trunc i64 ").append(s.value).append(" to i32\n");
+            body.append("  ").append(back).append(" = trunc i64 ").append(s).append(" to i32\n");
             String e = nv("s");
             body.append("  ").append(e).append(" = sext i32 ").append(back).append(" to i64\n");
             v64 = e;
-        } else if ("D".equals(s.kind)) {
-            v64 = s.value;
         } else {
-            v64 = s.value;
+            v64 = s;
         }
         String p = localPtr(idx);
         body.append("  store i64 ").append(v64).append(", ptr ").append(p).append("\n");

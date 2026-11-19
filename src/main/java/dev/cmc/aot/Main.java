@@ -65,6 +65,7 @@ public final class Main {
         ir.append(layout.renderVtables());
         ir.append(layout.renderStatics());
         ir.append(layout.renderTypeTables());
+        ir.append("@.pending_exc = global i64 0\n");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
