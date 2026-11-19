@@ -180,7 +180,6 @@ jobs:
         run: |
           set -e
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          export DYLD_ROOT_PATH="$SDK"
           for t in Hello Str2 ObjTest; do
             xcrun --sdk iphonesimulator clang -O1 \
               -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
@@ -188,6 +187,15 @@ jobs:
               -Ivendor/libffi/include -Ivendor/libffi/src -Ivendor/libffi \
               "build/ios-$t.ll" src/main/c/runtime.c build/ios/libffi.a \
               -o "build/ios-$t-sim"
+          done
+          file build/ios-Hello-sim
+          lipo -info build/ios-Hello-sim
+          RT=$(xcrun simctl list runtimes -j | python3 -c "import json,sys;d=json.load(sys.stdin);print([r['runtimeRoot'] for r in d['runtimes'] if r['platform']=='iOS'][0])")
+          echo "runtime root: $RT"
+          export DYLD_ROOT_PATH="$RT"
+          export DYLD_FALLBACK_FRAMEWORK_PATH="$RT/System/Library/Frameworks"
+          export DYLD_FALLBACK_LIBRARY_PATH="$RT/usr/lib:$RT/System/Library/Frameworks"
+          for t in Hello Str2 ObjTest; do
             "./build/ios-$t-sim" > "build/ios-$t-out.txt"
           done
           printf 'Hello from AOT\n' > build/ios-hello-expect.txt
