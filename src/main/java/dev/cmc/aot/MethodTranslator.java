@@ -470,20 +470,30 @@ public final class MethodTranslator {
             case Opcodes.CHECKCAST -> checkCast((TypeInsnNode) insn);
             case Opcodes.INSTANCEOF -> instanceOf((TypeInsnNode) insn);
             case Opcodes.NEW -> newObject((TypeInsnNode) insn);
-            case Opcodes.NEWARRAY, Opcodes.ANEWARRAY -> newArray();
+            case Opcodes.NEWARRAY -> newPrimArray(((IntInsnNode) insn).operand);
+            case Opcodes.ANEWARRAY -> newRefArray(((TypeInsnNode) insn).desc);
             case Opcodes.ARRAYLENGTH -> {
                 String av = popRef();
+                emitNullCheck(av);
                 String ap = toPtr(av);
+                String lenp = nv("al");
+                body.append("  ").append(lenp).append(" = getelementptr i8, ptr ").append(ap).append(", i32 ").append(ARRAY_LEN_OFFSET).append("\n");
                 String len = nv("al");
-                body.append("  ").append(len).append(" = load i64, ptr ").append(ap).append("\n");
-                pushInt64AsInt(len);
+                body.append("  ").append(len).append(" = load i32, ptr ").append(lenp).append("\n");
+                pushInt(len);
             }
-            case Opcodes.IALOAD, Opcodes.BALOAD, Opcodes.CALOAD, Opcodes.SALOAD -> arrayLoadI32();
+            case Opcodes.IALOAD -> arrayLoadI32();
+            case Opcodes.BALOAD -> arrayLoadI8();
+            case Opcodes.CALOAD -> arrayLoadChar();
+            case Opcodes.SALOAD -> arrayLoadShort();
             case Opcodes.LALOAD -> arrayLoadI64();
             case Opcodes.FALOAD -> arrayLoadF32();
             case Opcodes.DALOAD -> arrayLoadI64();
             case Opcodes.AALOAD -> arrayLoadI64();
-            case Opcodes.IASTORE, Opcodes.BASTORE, Opcodes.CASTORE, Opcodes.SASTORE -> arrayStoreI32();
+            case Opcodes.IASTORE -> arrayStoreI32();
+            case Opcodes.BASTORE -> arrayStoreI8();
+            case Opcodes.CASTORE -> arrayStoreI16();
+            case Opcodes.SASTORE -> arrayStoreI16();
             case Opcodes.LASTORE, Opcodes.DASTORE, Opcodes.AASTORE -> arrayStoreI64();
             case Opcodes.FASTORE -> arrayStoreF32();
             case Opcodes.GETFIELD -> getField((FieldInsnNode) insn);
@@ -1023,39 +1033,170 @@ public final class MethodTranslator {
         pushRef(iv);
     }
 
-    private void newArray() {
+    private static final int ARRAY_LEN_OFFSET = 16;
+    private static final int ARRAY_DATA_OFFSET = 24;
+
+    private void newArray(String elemKind, String typeDesc) {
         String cnt = popInt();
         declares.add("declare ptr @calloc(i64, i64)");
+        String neg = nv("an");
+        body.append("  ").append(neg).append(" = icmp slt i32 ").append(cnt).append(", 0\n");
+        String negBr = "ane" + (tmp++);
+        String okBr = "anok" + (tmp++);
+        body.append("  br i1 ").append(neg).append(", label %").append(negBr).append(", label %").append(okBr).append("\n");
+        body.append(negBr).append(":\n");
+        throwBuiltin("java/lang/NegativeArraySizeException");
+        body.append(okBr).append(":\n");
+        terminated = false;
         String c64 = nv("an");
         body.append("  ").append(c64).append(" = sext i32 ").append(cnt).append(" to i64\n");
+        String esz = String.valueOf(elemSize(elemKind));
         String bytes = nv("ab");
-        body.append("  ").append(bytes).append(" = mul i64 ").append(c64).append(", 8\n");
+        body.append("  ").append(bytes).append(" = mul i64 ").append(c64).append(", ").append(esz).append("\n");
         String total = nv("ab");
-        body.append("  ").append(total).append(" = add i64 ").append(bytes).append(", 8\n");
+        body.append("  ").append(total).append(" = add i64 ").append(bytes).append(", ").append(ARRAY_DATA_OFFSET).append("\n");
         String raw = nv("ap");
         body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(total).append(", i64 1)\n");
-        body.append("  store i64 ").append(c64).append(", ptr ").append(raw).append("\n");
+        body.append("  store ptr @.vt_empty, ptr ").append(raw).append("\n");
+        String tidp = nv("ap");
+        body.append("  ").append(tidp).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");
+        body.append("  store i32 ").append(layout.typeId(typeDesc)).append(", ptr ").append(tidp).append("\n");
+        String lenp = nv("ap");
+        body.append("  ").append(lenp).append(" = getelementptr i8, ptr ").append(raw).append(", i32 ").append(ARRAY_LEN_OFFSET).append("\n");
+        body.append("  store i32 ").append(cnt).append(", ptr ").append(lenp).append("\n");
         String iv = nv("av");
         body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
         pushRef(iv);
     }
 
+    private static int elemSize(String kind) {
+        return switch (kind) {
+            case "B", "Z" -> 1;
+            case "C", "S" -> 2;
+            case "I", "F" -> 4;
+            default -> 8;
+        };
+    }
+
     private String arrayElemPtr(String kind) {
         String idx = popInt();
         String av = popRef();
+        emitNullCheck(av);
         String ap = toPtr(av);
+        String lenp = nv("ap");
+        body.append("  ").append(lenp).append(" = getelementptr i8, ptr ").append(ap).append(", i32 ").append(ARRAY_LEN_OFFSET).append("\n");
+        String len = nv("ap");
+        body.append("  ").append(len).append(" = load i32, ptr ").append(lenp).append("\n");
+        String oob = nv("ap");
+        body.append("  ").append(oob).append(" = icmp uge i32 ").append(idx).append(", ").append(len).append("\n");
+        String oobBr = "aoe" + (tmp++);
+        String okBr = "aok" + (tmp++);
+        body.append("  br i1 ").append(oob).append(", label %").append(oobBr).append(", label %").append(okBr).append("\n");
+        body.append(oobBr).append(":\n");
+        throwBuiltin("java/lang/ArrayIndexOutOfBoundsException");
+        body.append(okBr).append(":\n");
+        terminated = false;
         String ety = switch (kind) {
+            case "B", "Z" -> "i8";
+            case "C", "S" -> "i16";
             case "I" -> "i32";
             case "F" -> "float";
             default -> "i64";
         };
         String i64 = nv("ai");
         body.append("  ").append(i64).append(" = sext i32 ").append(idx).append(" to i64\n");
-        String off = nv("ao");
-        body.append("  ").append(off).append(" = add i64 ").append(i64).append(", 1\n");
         String ep = nv("aep");
-        body.append("  ").append(ep).append(" = getelementptr ").append(ety).append(", ptr ").append(ap).append(", i64 ").append(off).append("\n");
-        return ep;
+        body.append("  ").append(ep).append(" = getelementptr ").append(ety).append(", ptr ").append(ap).append(", i64 ").append(i64).append("\n");
+        String base = nv("aep");
+        body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).append(", i32 ").append(ARRAY_DATA_OFFSET).append("\n");
+        return base;
+    }
+
+    private void emitNullCheck(String refVal) {
+        String isn = nv("nc");
+        body.append("  ").append(isn).append(" = icmp eq i64 ").append(refVal).append(", 0\n");
+        String nBr = "npe" + (tmp++);
+        String okBr = "npok" + (tmp++);
+        body.append("  br i1 ").append(isn).append(", label %").append(nBr).append(", label %").append(okBr).append("\n");
+        body.append(nBr).append(":\n");
+        throwBuiltin("java/lang/NullPointerException");
+        body.append(okBr).append(":\n");
+        terminated = false;
+    }
+
+    private void throwBuiltin(String cls) {
+        declares.add("declare ptr @calloc(i64, i64)");
+        String raw = nv("te");
+        body.append("  ").append(raw).append(" = call ptr @calloc(i64 16, i64 1)\n");
+        body.append("  store ptr @.vt_empty, ptr ").append(raw).append("\n");
+        String tp = nv("te");
+        body.append("  ").append(tp).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");
+        body.append("  store i32 ").append(layout.typeId(cls)).append(", ptr ").append(tp).append("\n");
+        String iv = nv("te");
+        body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
+        body.append("  store i64 ").append(iv).append(", ptr @.pending_exc\n");
+        emitUnwind();
+    }
+
+    private void newPrimArray(int operand) {
+        String kind = switch (operand) {
+            case org.objectweb.asm.Opcodes.T_BOOLEAN -> "Z";
+            case org.objectweb.asm.Opcodes.T_BYTE -> "B";
+            case org.objectweb.asm.Opcodes.T_CHAR -> "C";
+            case org.objectweb.asm.Opcodes.T_SHORT -> "S";
+            case org.objectweb.asm.Opcodes.T_INT -> "I";
+            case org.objectweb.asm.Opcodes.T_FLOAT -> "F";
+            case org.objectweb.asm.Opcodes.T_LONG -> "J";
+            default -> "D";
+        };
+        newArray(kind, kind);
+    }
+
+    private void newRefArray(String desc) {
+        newArray("L", desc);
+    }
+
+    private void arrayLoadI8() {
+        String ep = arrayElemPtr("B");
+        String v = nv("v");
+        body.append("  ").append(v).append(" = load i8, ptr ").append(ep).append("\n");
+        String e = nv("v");
+        body.append("  ").append(e).append(" = sext i8 ").append(v).append(" to i32\n");
+        pushInt(e);
+    }
+
+    private void arrayLoadChar() {
+        String ep = arrayElemPtr("C");
+        String v = nv("v");
+        body.append("  ").append(v).append(" = load i16, ptr ").append(ep).append("\n");
+        String e = nv("v");
+        body.append("  ").append(e).append(" = zext i16 ").append(v).append(" to i32\n");
+        pushInt(e);
+    }
+
+    private void arrayLoadShort() {
+        String ep = arrayElemPtr("S");
+        String v = nv("v");
+        body.append("  ").append(v).append(" = load i16, ptr ").append(ep).append("\n");
+        String e = nv("v");
+        body.append("  ").append(e).append(" = sext i16 ").append(v).append(" to i32\n");
+        pushInt(e);
+    }
+
+    private void arrayStoreI8() {
+        String val = popInt();
+        String ep = arrayElemPtr("B");
+        String b = nv("v");
+        body.append("  ").append(b).append(" = trunc i32 ").append(val).append(" to i8\n");
+        body.append("  store i8 ").append(b).append(", ptr ").append(ep).append("\n");
+    }
+
+    private void arrayStoreI16() {
+        String val = popInt();
+        String ep = arrayElemPtr("C");
+        String b = nv("v");
+        body.append("  ").append(b).append(" = trunc i32 ").append(val).append(" to i16\n");
+        body.append("  store i16 ").append(b).append(", ptr ").append(ep).append("\n");
     }
 
     private void arrayLoadI32() {
@@ -1099,6 +1240,7 @@ public final class MethodTranslator {
 
     private void getField(FieldInsnNode f) {
         String objv = popRef();
+        emitNullCheck(objv);
         String objp = toPtr(objv);
         int off = layout.fieldOffset(f.owner, f.name);
         String fp = nv("fp");
@@ -1140,6 +1282,7 @@ public final class MethodTranslator {
             val = popLong();
         }
         String objv = popRef();
+        emitNullCheck(objv);
         String objp = toPtr(objv);
         int off = layout.fieldOffset(f.owner, f.name);
         String fp = nv("fp");

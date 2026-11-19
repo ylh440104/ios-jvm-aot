@@ -130,6 +130,7 @@ public final class Layout {
         for (ClassInfo c : all) {
             l.classes.put(c.name(), c);
         }
+        l.registerBuiltins();
         for (ClassInfo c : all) {
             l.typeId(c.name());
         }
@@ -137,6 +138,34 @@ public final class Layout {
         l.assignFieldOffsets();
         l.buildVtables();
         return l;
+    }
+
+    private void registerBuiltins() {
+        addBuiltin("java/lang/Object", null);
+        addBuiltin("java/lang/Throwable", "java/lang/Object");
+        addBuiltin("java/lang/Exception", "java/lang/Throwable");
+        addBuiltin("java/lang/RuntimeException", "java/lang/Exception");
+        addBuiltin("java/lang/IndexOutOfBoundsException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/ArrayIndexOutOfBoundsException", "java/lang/IndexOutOfBoundsException");
+        addBuiltin("java/lang/NullPointerException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/ClassCastException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/ArithmeticException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/NegativeArraySizeException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/IllegalStateException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/IllegalArgumentException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/UnsupportedOperationException", "java/lang/RuntimeException");
+        addBuiltin("java/lang/OutOfMemoryError", "java/lang/Object");
+    }
+
+    private void addBuiltin(String name, String superName) {
+        if (classes.containsKey(name)) {
+            return;
+        }
+        classes.put(name, new ClassInfo(name, superName, new ArrayList<>(), new ArrayList<>()));
+    }
+
+    public String arrayTypeId(String desc) {
+        return "[L" + desc + ";";
     }
 
     private void assignSlots() {
