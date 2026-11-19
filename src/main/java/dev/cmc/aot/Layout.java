@@ -319,6 +319,10 @@ public final class Layout {
         return i;
     }
 
+    public List<ClassInfo> classInfos() {
+        return new ArrayList<>(classes.values());
+    }
+
     public int fieldOffset(String owner, String name) {
         Integer off = fieldOffsets.get(owner + "#" + name);
         if (off != null) {
@@ -534,6 +538,14 @@ public final class Layout {
             }
         }
         return out;
+    }
+
+    public static int retCode(String methodDesc) {
+        String r = org.objectweb.asm.Type.getReturnType(methodDesc).getDescriptor();
+        if ("V".equals(r)) {
+            return 0;
+        }
+        return kindCode(r);
     }
 
     public static int kindCode(String desc) {

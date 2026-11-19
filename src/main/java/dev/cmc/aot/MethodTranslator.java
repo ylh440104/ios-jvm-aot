@@ -1409,7 +1409,6 @@ private String currentHandler() {
             if (isBuiltinContainer(m.owner)) {
                 return;
             }
-            body.append("  ; unimplemented jdk ctor ").append(m.owner).append('.').append(m.name).append("\n");
             pushReturnPlaceholder(m.desc);
             return;
         }
@@ -1455,7 +1454,6 @@ private String currentHandler() {
         }
 String objv = popRef();
         if (m.owner.startsWith("java/") && !layout.hasSlot(m.name, m.desc)) {
-            body.append("  ; unimplemented jdk virtual ").append(m.owner).append('.').append(m.name).append("\n");
             pushReturnPlaceholder(m.desc);
             return;
         }
@@ -1509,7 +1507,6 @@ String objv = popRef();
             raw[i] = popOfKind(kinds.get(i));
         }
         if (m.owner.startsWith("java/") || m.owner.startsWith("javax/")) {
-            body.append("  ; unimplemented jdk call ").append(m.owner).append('.').append(m.name).append(m.desc).append('\n');
             pushReturnPlaceholder(m.desc);
             return;
         }
@@ -2478,6 +2475,34 @@ String objv = popRef();
             String fv = nv("v");
             body.append("  ").append(fv).append(" = sitofp i32 ").append(r).append(" to float\n");
             pushFloat(fv);
+            return true;
+        }
+        if ("getDeclaredMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;".equals(key)) {
+            String arr = popRef();
+            String nm = popRef();
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_method_lookup(i32, i64)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_method_lookup(i32 ").append(cid)
+                .append(", i64 ").append(nm).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+            String arr = popRef();
+            String target = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_object_array_ptr(i64)");
+            declares.add("declare i64 @aot_method_invoke(i64, i64, i64)");
+            String ap = nv("v");
+            body.append("  ").append(ap).append(" = call i64 @aot_object_array_ptr(i64 ").append(arr).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_method_invoke(i64 ").append(self)
+                .append(", i64 ").append(target).append(", i64 ").append(ap).append(")\n");
+            pushRef(r);
             return true;
         }
         if ("getDeclaredField(Ljava/lang/String;)Ljava/lang/reflect/Field;".equals(key)) {

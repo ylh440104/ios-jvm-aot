@@ -546,9 +546,9 @@ int64_t aot_field_new(int32_t owner_tid, int32_t offset, int32_t kind, int64_t n
     return (int64_t)(intptr_t)obj;
 }
 
-int64_t aot_method_new(int32_t owner_tid, int32_t slot, int64_t name)
+int64_t aot_method_new(int32_t owner_tid, int32_t slot, int64_t name, int32_t ret_kind)
 {
-    void *obj = gc_alloc(32);
+    void *obj = gc_alloc(40);
     if (!obj) {
         return 0;
     }
@@ -556,6 +556,7 @@ int64_t aot_method_new(int32_t owner_tid, int32_t slot, int64_t name)
     *(int32_t *)((char *)obj + 8) = aot_method_type_id;
     *(int32_t *)((char *)obj + 12) = owner_tid;
     *(int32_t *)((char *)obj + 16) = slot;
+    *(int32_t *)((char *)obj + 20) = ret_kind;
     *(int64_t *)((char *)obj + 24) = name;
     return (int64_t)(intptr_t)obj;
 }
@@ -646,6 +647,71 @@ int64_t aot_method_name(int64_t method)
         return 0;
     }
     return *(int64_t *)((char *)(intptr_t)method + 24);
+}
+
+typedef struct {
+    int64_t owner_tid;
+    int64_t slot;
+    int64_t name;
+    int64_t ret_kind;
+} method_meta_rec;
+
+static method_meta_rec *method_meta_table;
+static int32_t method_meta_count;
+
+extern int64_t aot_mslot_dispatch(int32_t slot, int64_t self, int64_t args) __attribute__((weak));
+int64_t aot_box_new(int32_t v);
+int64_t aot_long_box_new(int64_t v);
+
+void aot_set_method_meta_table(int64_t *data, int32_t count)
+{
+    method_meta_table = (method_meta_rec *)(intptr_t)data;
+    method_meta_count = count;
+}
+
+int64_t aot_method_lookup(int32_t owner_tid, int64_t name)
+{
+    if (name == 0 || method_meta_table == 0) {
+        return 0;
+    }
+    for (int32_t i = 0; i < method_meta_count; i++) {
+        method_meta_rec *m = &method_meta_table[i];
+        if ((int32_t)m->owner_tid != owner_tid) {
+            continue;
+        }
+        if (m->name != 0 && aot_str_equals(m->name, name)) {
+            return aot_method_new(owner_tid, (int32_t)m->slot, m->name, (int32_t)m->ret_kind);
+        }
+    }
+    return 0;
+}
+
+int64_t aot_object_array_ptr(int64_t arr)
+{
+    if (arr == 0) {
+        return 0;
+    }
+    return arr + 24;
+}
+
+int64_t aot_method_invoke(int64_t method, int64_t target, int64_t args)
+{
+    if (method == 0 || aot_mslot_dispatch == 0) {
+        return 0;
+    }
+    int32_t slot = *(int32_t *)((char *)(intptr_t)method + 16);
+    int32_t rk = *(int32_t *)((char *)(intptr_t)method + 20);
+    int64_t raw = aot_mslot_dispatch(slot, target, args);
+    if (rk == 0) {
+        return 0;
+    }
+    if (rk == 1 || rk == 2 || rk == 3 || rk == 4) {
+        return aot_box_new((int32_t)raw);
+    }
+    if (rk == 6) {
+        return aot_long_box_new(raw);
+    }
+    return raw;
 }
 
 typedef struct {
