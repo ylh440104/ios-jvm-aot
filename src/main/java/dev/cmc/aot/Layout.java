@@ -11,7 +11,7 @@ import java.util.Map;
 
 public final class Layout {
 
-    public static final int HEADER_SIZE = 8;
+    public static final int HEADER_SIZE = 16;
 
     private final Map<String, ClassInfo> classes = new LinkedHashMap<>();
     private final Map<String, Integer> fieldOffsets = new HashMap<>();
@@ -20,6 +20,84 @@ public final class Layout {
     private final List<String> slotKeys = new ArrayList<>();
     private final Map<String, Integer> vtableIndex = new HashMap<>();
     private final Map<String, String> staticFields = new LinkedHashMap<>();
+    private final Map<String, Integer> typeIds = new LinkedHashMap<>();
+
+    public int typeId(String cls) {
+        Integer id = typeIds.get(cls);
+        if (id != null) {
+            return id;
+        }
+        int next = typeIds.size() + 1;
+        typeIds.put(cls, next);
+        return next;
+    }
+
+    public boolean hasTypeId(String cls) {
+        return typeIds.containsKey(cls);
+    }
+
+    public Map<String, Integer> typeIdMap() {
+        return typeIds;
+    }
+
+    public List<String> ancestry(String cls) {
+        return fieldChain(cls);
+    }
+
+    public String renderTypeTable() {
+        return "";
+    }
+
+    public String renderTypeInit() {
+        return "";
+    }
+
+    private int superIdOf(String cls) {
+        ClassInfo c = classes.get(cls);
+        if (c == null || c.superName() == null) {
+            return 0;
+        }
+        Integer sid = typeIds.get(c.superName());
+        return sid == null ? 0 : sid;
+    }
+
+    private final Map<String, String> typeTables = new LinkedHashMap<>();
+
+    public String assignTable(String target) {
+        String existing = typeTables.get(target);
+        if (existing != null) {
+            return existing;
+        }
+        int slots = Math.max(typeIds.size() + 1, 2);
+        StringBuilder vals = new StringBuilder();
+        java.util.Set<Integer> marked = new java.util.HashSet<>();
+        for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
+            if (fieldChain(e.getKey()).contains(target)) {
+                marked.add(e.getValue());
+            }
+        }
+        for (int i = 0; i < slots; i++) {
+            if (i > 0) {
+                vals.append(", ");
+            }
+            vals.append("i32 ").append(marked.contains(i) ? "1" : "0");
+        }
+        String label = "@.typetbl_" + ClassParser.mangle(target, "t", "()V");
+        typeTables.put(target, label);
+        pendingTables.append(label).append(" = private unnamed_addr constant [").append(slots)
+            .append(" x i32] [").append(vals).append("]\n");
+        return label;
+    }
+
+    private final StringBuilder pendingTables = new StringBuilder();
+
+    public String renderTypeTables() {
+        return pendingTables.toString();
+    }
+
+    public int typeTableSlots() {
+        return Math.max(typeIds.size() + 1, 2);
+    }
 
     private Layout() {
     }
@@ -28,6 +106,9 @@ public final class Layout {
         Layout l = new Layout();
         for (ClassInfo c : all) {
             l.classes.put(c.name(), c);
+        }
+        for (ClassInfo c : all) {
+            l.typeId(c.name());
         }
         l.assignSlots();
         l.assignFieldOffsets();
@@ -189,8 +270,8 @@ public final class Layout {
     public String renderVtables() {
         StringBuilder sb = new StringBuilder();
         sb.append("@.vt_empty = private unnamed_addr constant [1 x ptr] [ptr null]\n");
+        int n = Math.max(slotCount(), 1);
         for (String cls : classes.keySet()) {
-            int n = Math.max(slotCount(), 1);
             sb.append(vtableLabel(cls)).append(" = global [").append(n).append(" x ptr] [");
             for (int i = 0; i < n; i++) {
                 if (i > 0) {
@@ -202,6 +283,10 @@ public final class Layout {
             sb.append("]\n");
         }
         return sb.toString();
+    }
+
+    public int vtableSlotOffset(int slot) {
+        return slot * 8;
     }
 
     private String resolveSlot(String cls, String key) {

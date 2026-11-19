@@ -459,6 +459,8 @@ public final class MethodTranslator {
                 pushSlot(b);
                 pushSlot(a);
             }
+            case Opcodes.CHECKCAST -> checkCast((TypeInsnNode) insn);
+            case Opcodes.INSTANCEOF -> instanceOf((TypeInsnNode) insn);
             case Opcodes.NEW -> newObject((TypeInsnNode) insn);
             case Opcodes.NEWARRAY, Opcodes.ANEWARRAY -> newArray();
             case Opcodes.ARRAYLENGTH -> {
@@ -653,6 +655,77 @@ public final class MethodTranslator {
         return r;
     }
 
+    private void checkCast(TypeInsnNode tn) {
+        Slot s = popSlot();
+        String target = tn.desc;
+        if (!layout.hasClass(target)) {
+            pushSlot(s);
+            return;
+        }
+        String idx = typeIndex(target);
+        String objp = toPtr(s.value);
+        String tip = nv("cv");
+        body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(objp).append(", i32 8\n");
+        String tid = nv("cv");
+        body.append("  ").append(tid).append(" = load i32, ptr ").append(tip).append("\n");
+        String base = nv("cv");
+        body.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots()).append(" x i32], ptr ")
+            .append(idx).append(", i64 0, i32 0\n");
+        String cell = nv("cv");
+        body.append("  ").append(cell).append(" = getelementptr i32, ptr ").append(base).append(", i32 ").append(tid).append("\n");
+        String ok = nv("cv");
+        body.append("  ").append(ok).append(" = load i32, ptr ").append(cell).append("\n");
+        String nzc = nv("cv");
+        body.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
+        String nullc = nv("cv");
+        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
+        String both = nv("cv");
+        body.append("  ").append(both).append(" = or i1 ").append(nzc).append(", ").append(nullc).append("\n");
+        String res = nv("cv");
+        body.append("  ").append(res).append(" = select i1 ").append(both).append(", i64 ").append(s.value).append(", i64 0\n");
+        pushRef(res);
+    }
+
+    private void instanceOf(TypeInsnNode tn) {
+        Slot s = popSlot();
+        String target = tn.desc;
+        if (!layout.hasClass(target)) {
+            pushIntLit(0);
+            return;
+        }
+        String idx = typeIndex(target);
+        String objp = toPtr(s.value);
+        String tip = nv("iv");
+        body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(objp).append(", i32 8\n");
+        String tid = nv("iv");
+        body.append("  ").append(tid).append(" = load i32, ptr ").append(tip).append("\n");
+        String base = nv("iv");
+        body.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots()).append(" x i32], ptr ")
+            .append(idx).append(", i64 0, i32 0\n");
+        String cell = nv("iv");
+        body.append("  ").append(cell).append(" = getelementptr i32, ptr ").append(base).append(", i32 ").append(tid).append("\n");
+        String ok = nv("iv");
+        body.append("  ").append(ok).append(" = load i32, ptr ").append(cell).append("\n");
+        String nzc = nv("iv");
+        body.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
+        String res = nv("iv");
+        body.append("  ").append(res).append(" = zext i1 ").append(nzc).append(" to i32\n");
+        String nullc = nv("iv");
+        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
+        String finalv = nv("iv");
+        body.append("  ").append(finalv).append(" = select i1 ").append(nullc).append(", i32 0, i32 ").append(res).append("\n");
+        pushInt(finalv);
+    }
+
+
+    private String typeIndex(String cls) {
+        return layout.assignTable(cls);
+    }
+
+    private int typeTableSlots() {
+        return layout.typeTableSlots();
+    }
+
     private void newObject(TypeInsnNode tn) {
         String cls = tn.desc;
         if (!layout.hasClass(cls)) {
@@ -663,6 +736,9 @@ public final class MethodTranslator {
         String raw = nv("np");
         body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(size).append(", i64 1)\n");
         body.append("  store ptr ").append(layout.vtableLabel(cls)).append(", ptr ").append(raw).append("\n");
+        String tip = nv("np");
+        body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");
+        body.append("  store i32 ").append(layout.typeId(cls)).append(", ptr ").append(tip).append("\n");
         String iv = nv("nv");
         body.append("  ").append(iv).append(" = ptrtoint ptr ").append(raw).append(" to i64\n");
         pushRef(iv);
