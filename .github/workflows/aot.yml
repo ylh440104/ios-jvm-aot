@@ -196,7 +196,9 @@ jobs:
           export DYLD_FALLBACK_FRAMEWORK_PATH="$RT/System/Library/Frameworks"
           export DYLD_FALLBACK_LIBRARY_PATH="$RT/usr/lib:$RT/System/Library/Frameworks"
           for t in Hello Str2 ObjTest Buf1 Buf5 Ffi2 Ffi3 Buf9; do
-            "./build/ios-$t-sim" > "build/ios-$t-out.txt"
+            echo "RUN $t"
+            "./build/ios-$t-sim" > "build/ios-$t-out.txt" || echo "FAILED $t"
+            echo "DONE $t"
           done
           printf 'Hello from AOT\n' > build/ios-hello-expect.txt
           diff build/ios-hello-expect.txt build/ios-Hello-out.txt && echo IOS_HELLO_OK
