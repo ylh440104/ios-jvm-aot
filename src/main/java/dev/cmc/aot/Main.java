@@ -42,6 +42,7 @@ public final class Main {
 
         StringPool pool = new StringPool();
         Set<String> declares = new LinkedHashSet<>();
+        LambdaSynthesizer.scan(classes);
         Layout layout = Layout.build(classes);
         StringBuilder funcs = new StringBuilder();
         String entry = null;

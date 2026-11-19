@@ -40,6 +40,25 @@ public final class Layout {
         return typeIds;
     }
 
+    public void registerInterface(String name, String superName, List<MethodNode> methods) {
+        if (name == null || classes.containsKey(name)) {
+            return;
+        }
+        String sup = superName == null ? "java/lang/Object" : superName;
+        classes.put(name, new ClassInfo(name, sup, methods, new ArrayList<>()));
+        typeId(name);
+        MethodNode ctor = new MethodNode();
+        ctor.name = "<init>";
+        ctor.desc = "()V";
+        ctor.access = org.objectweb.asm.Opcodes.ACC_PUBLIC;
+        ctor.instructions = new org.objectweb.asm.tree.InsnList();
+        ctor.instructions.add(new org.objectweb.asm.tree.InsnNode(org.objectweb.asm.Opcodes.RETURN));
+        classes.get(name).methods().add(ctor);
+        assignSlots();
+        buildVtables();
+        assignFieldOffsets();
+    }
+
     public List<String> ancestry(String cls) {
         return fieldChain(cls);
     }
@@ -409,5 +428,9 @@ public final class Layout {
 
     public Map<String, Integer> slotMap() {
         return slots;
+    }
+
+    public boolean hasSlot(String name, String desc) {
+        return slots.containsKey(name + desc);
     }
 }

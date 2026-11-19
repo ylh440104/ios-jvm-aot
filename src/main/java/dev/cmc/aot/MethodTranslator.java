@@ -1454,7 +1454,7 @@ private String currentHandler() {
             raw[i] = popOfKind(kinds.get(i));
         }
         String objv = popRef();
-        if (m.owner.startsWith("java/")) {
+        if (m.owner.startsWith("java/") && !layout.hasSlot(m.name, m.desc)) {
             body.append("  ; unimplemented jdk virtual ").append(m.owner).append('.').append(m.name).append("\n");
             pushReturnPlaceholder(m.desc);
             return;
@@ -1711,6 +1711,10 @@ private String currentHandler() {
 
     private void invokeDynamic(InvokeDynamicInsnNode insn) {
         String bsm = insn.bsm.getOwner();
+        if ("java/lang/invoke/LambdaMetafactory".equals(bsm)) {
+            emitLambda(insn);
+            return;
+        }
         if (!"java/lang/invoke/StringConcatFactory".equals(bsm)) {
             fail("unsupported invokedynamic bootstrap " + bsm);
             return;
@@ -1768,6 +1772,45 @@ private String currentHandler() {
         String res = nv("v");
         body.append("  ").append(res).append(" = call i64 @aot_indy_end(i64 ").append(sbv).append(")\n");
         pushRef(res);
+    }
+
+    private void emitLambda(InvokeDynamicInsnNode insn) {
+        String key = LambdaSynthesizer.siteKey(owner.name(), insn.name, insn.desc, insn.bsmArgs);
+        String cls = LambdaSynthesizer.lookup(key);
+        if (cls == null) {
+            fail("lambda site not synthesised: " + insn.name + insn.desc);
+            return;
+        }
+        org.objectweb.asm.Type[] caps = org.objectweb.asm.Type.getArgumentTypes(insn.desc);
+        String[] raw = new String[caps.length];
+        List<String> kinds = TypeInfo.argKinds(insn.desc);
+        for (int i = kinds.size() - 1; i >= 0; i--) {
+            raw[i] = popOfKind(kinds.get(i));
+        }
+        declares.add("declare ptr @gc_calloc(i64, i64)");
+        int size = layout.objectSize(cls);
+        String rawPtr = nv("lp");
+        body.append("  ").append(rawPtr).append(" = call ptr @gc_calloc(i64 ").append(size).append(", i64 1)\n");
+        String addr = nv("la");
+        body.append("  ").append(addr).append(" = ptrtoint ptr ").append(rawPtr).append(" to i64\n");
+        String vtLabel = layout.vtableLabel(cls);
+        String vtp = nv("lv");
+        body.append("  ").append(vtp).append(" = getelementptr ptr, ptr ").append(rawPtr).append(", i32 0\n");
+        body.append("  store ptr ").append(vtLabel).append(", ptr ").append(vtp).append("\n");
+        String tip = nv("lt");
+        body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(rawPtr).append(", i32 8\n");
+        String tpp = nv("ltp");
+        body.append("  ").append(tpp).append(" = bitcast ptr ").append(tip).append(" to ptr\n");
+        body.append("  store i32 ").append(layout.typeId(cls)).append(", ptr ").append(tpp).append("\n");
+        for (int i = 0; i < caps.length; i++) {
+            String fp = nv("lf");
+            body.append("  ").append(fp).append(" = getelementptr i8, ptr ").append(rawPtr)
+                .append(", i32 ").append(layout.fieldOffset(cls, "c" + i)).append("\n");
+            String fpp = nv("lfp");
+            body.append("  ").append(fpp).append(" = bitcast ptr ").append(fp).append(" to ptr\n");
+            body.append("  store i64 ").append(raw[i]).append(", ptr ").append(fpp).append("\n");
+        }
+        pushRef(addr);
     }
 
     private void emitIndyArgTyped(String sbv, String kind, org.objectweb.asm.Type type, String value) {
