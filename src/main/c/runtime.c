@@ -2379,8 +2379,12 @@ void aot_thread_yield(void)
 
 typedef struct monitor_entry {
     int64_t obj;
-    pthread_mutex_t lock;
+    pthread_mutex_t guard;
+    pthread_cond_t free_cv;
+    pthread_cond_t wait_cv;
+    pthread_t owner;
     int32_t depth;
+    int32_t waiters;
     struct monitor_entry *next;
 } monitor_entry;
 
@@ -2406,11 +2410,41 @@ static monitor_entry *monitor_of(int64_t obj, int32_t create)
         return 0;
     }
     e->obj = obj;
-    pthread_mutex_init(&e->lock, 0);
+    pthread_mutex_init(&e->guard, 0);
+    pthread_cond_init(&e->free_cv, 0);
+    pthread_cond_init(&e->wait_cv, 0);
+    e->owner = 0;
+    e->depth = 0;
+    e->waiters = 0;
     e->next = monitors;
     monitors = e;
     pthread_mutex_unlock(&monitor_table_lock);
     return e;
+}
+
+static void monitor_acquire(monitor_entry *e)
+{
+    pthread_t self = pthread_self();
+    pthread_mutex_lock(&e->guard);
+    while (e->depth > 0 && !pthread_equal(e->owner, self)) {
+        pthread_cond_wait(&e->free_cv, &e->guard);
+    }
+    e->owner = self;
+    e->depth++;
+    pthread_mutex_unlock(&e->guard);
+}
+
+static void monitor_release(monitor_entry *e)
+{
+    pthread_mutex_lock(&e->guard);
+    if (e->depth > 0 && pthread_equal(e->owner, pthread_self())) {
+        e->depth--;
+        if (e->depth == 0) {
+            e->owner = 0;
+            pthread_cond_broadcast(&e->free_cv);
+        }
+    }
+    pthread_mutex_unlock(&e->guard);
 }
 
 int32_t aot_monitor_enter(int64_t obj)
@@ -2422,8 +2456,7 @@ int32_t aot_monitor_enter(int64_t obj)
     if (!e) {
         return 0;
     }
-    pthread_mutex_lock(&e->lock);
-    e->depth++;
+    monitor_acquire(e);
     return 1;
 }
 
@@ -2436,8 +2469,7 @@ int32_t aot_monitor_exit(int64_t obj)
     if (!e) {
         return 0;
     }
-    e->depth--;
-    pthread_mutex_unlock(&e->lock);
+    monitor_release(e);
     return 1;
 }
 
@@ -2447,7 +2479,93 @@ int64_t aot_monitor_depth(int64_t obj)
         return 0;
     }
     monitor_entry *e = monitor_of(obj, 0);
-    return e ? (int64_t)e->depth : 0;
+    if (!e) {
+        return 0;
+    }
+    pthread_mutex_lock(&e->guard);
+    int32_t d = e->depth;
+    pthread_mutex_unlock(&e->guard);
+    return (int64_t)d;
+}
+
+int32_t aot_monitor_holds(int64_t obj)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 0);
+    if (!e) {
+        return 0;
+    }
+    pthread_mutex_lock(&e->guard);
+    int32_t held = e->depth > 0 && pthread_equal(e->owner, pthread_self());
+    pthread_mutex_unlock(&e->guard);
+    return held;
+}
+
+int32_t aot_monitor_wait(int64_t obj, int64_t timeout_ms, int32_t has_timeout)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 1);
+    if (!e) {
+        return -1;
+    }
+    int32_t saved = 0;
+    pthread_mutex_lock(&e->guard);
+    if (e->depth == 0 || !pthread_equal(e->owner, pthread_self())) {
+        pthread_mutex_unlock(&e->guard);
+        return -1;
+    }
+    saved = e->depth;
+    e->depth = 0;
+    e->owner = 0;
+    e->waiters++;
+    pthread_cond_broadcast(&e->free_cv);
+    if (has_timeout && timeout_ms > 0) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        int64_t ns = (int64_t)ts.tv_nsec + (timeout_ms % 1000) * 1000000LL;
+        ts.tv_sec += (time_t)(timeout_ms / 1000) + (time_t)(ns / 1000000000LL);
+        ts.tv_nsec = (long)(ns % 1000000000LL);
+        pthread_cond_timedwait(&e->wait_cv, &e->guard, &ts);
+    } else {
+        pthread_cond_wait(&e->wait_cv, &e->guard);
+    }
+    e->waiters--;
+    while (e->depth > 0) {
+        pthread_cond_wait(&e->free_cv, &e->guard);
+    }
+    e->owner = pthread_self();
+    e->depth = saved;
+    pthread_mutex_unlock(&e->guard);
+    return 1;
+}
+
+int32_t aot_monitor_notify(int64_t obj, int32_t all)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 0);
+    if (!e) {
+        return -1;
+    }
+    pthread_mutex_lock(&e->guard);
+    if (e->depth == 0 || !pthread_equal(e->owner, pthread_self())) {
+        pthread_mutex_unlock(&e->guard);
+        return -1;
+    }
+    if (e->waiters > 0) {
+        if (all) {
+            pthread_cond_broadcast(&e->wait_cv);
+        } else {
+            pthread_cond_signal(&e->wait_cv);
+        }
+    }
+    pthread_mutex_unlock(&e->guard);
+    return 1;
 }
 
 int64_t aot_system_nano(void)

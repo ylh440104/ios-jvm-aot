@@ -2427,6 +2427,18 @@ String objv = popRef();
         return false;
     }
 
+    private void emitIllegalMonitor(String rc) {
+        String bad = nv("im");
+        body.append("  ").append(bad).append(" = icmp slt i32 ").append(rc).append(", 0\n");
+        String badBr = "imse" + (tmp++);
+        String okBr = "imsok" + (tmp++);
+        body.append("  br i1 ").append(bad).append(", label %").append(badBr).append(", label %").append(okBr).append("\n");
+        body.append(badBr).append(":\n");
+        throwBuiltin("java/lang/IllegalMonitorStateException");
+        body.append(okBr).append(":\n");
+        terminated = false;
+    }
+
     private void emitParseGuard(String sv) {
         declares.add("declare i32 @aot_int_parse_ok(i64)");
         String ok = nv("pg");
@@ -2769,6 +2781,56 @@ String objv = popRef();
         if ("hashCode()I".equals(key)) {
             String self = popRef();
             emitStrCall("aot_object_hash", "i32", self);
+            return true;
+        }
+        if ("wait()V".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_monitor_wait(i64, i64, i32)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_monitor_wait(i64 ").append(self)
+                .append(", i64 0, i32 0)\n");
+            emitIllegalMonitor(r);
+            return true;
+        }
+        if ("wait(J)V".equals(key)) {
+            String ms = popLong();
+            String self = popRef();
+            declares.add("declare i32 @aot_monitor_wait(i64, i64, i32)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_monitor_wait(i64 ").append(self)
+                .append(", i64 ").append(ms).append(", i32 1)\n");
+            emitIllegalMonitor(r);
+            return true;
+        }
+        if ("wait(JI)V".equals(key)) {
+            String ns = popInt();
+            String ms = popLong();
+            String self = popRef();
+            declares.add("declare i32 @aot_monitor_wait(i64, i64, i32)");
+            String total = nv("v");
+            String nsl = nv("v");
+            body.append("  ").append(nsl).append(" = sext i32 ").append(ns).append(" to i64\n");
+            body.append("  ").append(total).append(" = add i64 ").append(ms).append(", 1\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_monitor_wait(i64 ").append(self)
+                .append(", i64 ").append(total).append(", i32 1)\n");
+            emitIllegalMonitor(r);
+            return true;
+        }
+        if ("notify()V".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_monitor_notify(i64, i32)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_monitor_notify(i64 ").append(self).append(", i32 0)\n");
+            emitIllegalMonitor(r);
+            return true;
+        }
+        if ("notifyAll()V".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_monitor_notify(i64, i32)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_monitor_notify(i64 ").append(self).append(", i32 1)\n");
+            emitIllegalMonitor(r);
             return true;
         }
         if ("equals(Ljava/lang/Object;)Z".equals(m.name + d)) {
