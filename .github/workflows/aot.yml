@@ -250,14 +250,27 @@ jobs:
       - name: Run iOS app in simulator
         run: |
           set -e
-          xcrun simctl boot "iPhone 15" || true
-          xcrun simctl bootstatus "iPhone 15" -b || true
-          xcrun simctl install booted build/AotDemo.app
-          xcrun simctl launch --console-pty booted dev.cmc.aot.demo > build/app-out.txt 2>&1 &
-          sleep 12
-          cat build/app-out.txt
-          grep -q "hello from java" build/app-out.txt && echo IOS_APP_RUNS || echo IOS_APP_NO_OUTPUT
-          xcrun simctl uninstall booted dev.cmc.aot.demo || true
+          xcrun simctl list devices available | head -25
+          DEVID=$(xcrun simctl list devices available | grep -o "[0-9A-F]\{8\}-[0-9A-F]\{4\}-[0-9A-F]\{4\}-[0-9A-F]\{4\}-[0-9A-F]\{12\}" | head -1)
+          if [ -z "$DEVID" ]; then
+            DEVID=$(xcrun simctl create aot-test "com.apple.CoreSimulator.SimDeviceType.iPhone-15" "com.apple.CoreSimulator.SimRuntime.iOS-17-5" || true)
+          fi
+          echo "device: $DEVID"
+          xcrun simctl boot "$DEVID"
+          xcrun simctl bootstatus "$DEVID" -b
+          xcrun simctl install "$DEVID" build/AotDemo.app
+          xcrun simctl launch "$DEVID" dev.cmc.aot.demo > build/launch.txt 2>&1 || true
+          cat build/launch.txt
+          sleep 10
+          xcrun simctl spawn "$DEVID" log show --last 40s --predicate 'processImagePath CONTAINS "AotDemo"' > build/app-log.txt 2>&1 || true
+          tail -50 build/app-log.txt
+          xcrun simctl terminate "$DEVID" dev.cmc.aot.demo || true
+          xcrun simctl uninstall "$DEVID" dev.cmc.aot.demo || true
+          if grep -qi "hello from java" build/app-log.txt; then
+            echo IOS_APP_RUNS
+          else
+            echo IOS_APP_LAUNCHED_NO_STDOUT
+          fi
 
       - name: Build iOS device object
         run: |
