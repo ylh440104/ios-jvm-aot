@@ -623,3 +623,538 @@ int64_t aot_object_hash(int64_t obj)
     v ^= v >> 33;
     return (int64_t)(v & 0x7FFFFFFF);
 }
+
+typedef struct {
+    void *vtable;
+    int32_t type_id;
+    int32_t pad0;
+    uint16_t *chars;
+    int32_t length;
+    int32_t capacity;
+} aot_builder;
+
+static int64_t g_builder_type_id = -1;
+static void *g_builder_vtable;
+
+void aot_set_builder_type(int64_t type_id, int64_t vtable)
+{
+    g_builder_type_id = type_id;
+    g_builder_vtable = (void *)(intptr_t)vtable;
+}
+
+static int64_t builder_new(int32_t cap)
+{
+    if (cap < 8) {
+        cap = 8;
+    }
+    uint16_t *buf = (uint16_t *)gc_calloc((int64_t)cap * 2, 1);
+    if (!buf) {
+        return 0;
+    }
+    void *obj = gc_alloc(32);
+    if (!obj) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)obj;
+    b->vtable = g_builder_vtable;
+    b->type_id = (int32_t)g_builder_type_id;
+    b->pad0 = 0;
+    b->chars = buf;
+    b->length = 0;
+    b->capacity = cap;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_sb_new(void)
+{
+    return builder_new(16);
+}
+
+int64_t aot_sb_new_cap(int32_t cap)
+{
+    return builder_new(cap);
+}
+
+int64_t aot_sb_new_str(int64_t s)
+{
+    int32_t len = s ? ((aot_string *)(intptr_t)s)->length : 0;
+    int64_t obj = builder_new(len + 16);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)(intptr_t)obj;
+    if (s) {
+        aot_string *str = (aot_string *)(intptr_t)s;
+        const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+        for (int32_t i = 0; i < len; i++) {
+            b->chars[i] = src[i];
+        }
+        b->length = len;
+    }
+    return obj;
+}
+
+static void builder_grow(aot_builder *b, int32_t need)
+{
+    if (b->length + need <= b->capacity) {
+        return;
+    }
+    int32_t cap = b->capacity * 2;
+    while (cap < b->length + need) {
+        cap *= 2;
+    }
+    uint16_t *nb = (uint16_t *)gc_calloc((int64_t)cap * 2, 1);
+    if (!nb) {
+        return;
+    }
+    for (int32_t i = 0; i < b->length; i++) {
+        nb[i] = b->chars[i];
+    }
+    b->chars = nb;
+    b->capacity = cap;
+}
+
+int64_t aot_sb_append_str(int64_t sb, int64_t s)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)(intptr_t)sb;
+    if (s == 0) {
+        const char *null_txt = "null";
+        int32_t n = 4;
+        builder_grow(b, n);
+        for (int32_t i = 0; i < n; i++) {
+            b->chars[b->length + i] = (uint16_t)null_txt[i];
+        }
+        b->length += n;
+        return sb;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    builder_grow(b, str->length);
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    for (int32_t i = 0; i < str->length; i++) {
+        b->chars[b->length + i] = src[i];
+    }
+    b->length += str->length;
+    return sb;
+}
+
+static void builder_push_ascii(aot_builder *b, const char *txt, int32_t n)
+{
+    builder_grow(b, n);
+    for (int32_t i = 0; i < n; i++) {
+        b->chars[b->length + i] = (uint16_t)(unsigned char)txt[i];
+    }
+    b->length += n;
+}
+
+int64_t aot_sb_append_int(int64_t sb, int32_t v)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%d", (int)v);
+    builder_push_ascii((aot_builder *)(intptr_t)sb, buf, n);
+    return sb;
+}
+
+int64_t aot_sb_append_long(int64_t sb, int64_t v)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%lld", (long long)v);
+    builder_push_ascii((aot_builder *)(intptr_t)sb, buf, n);
+    return sb;
+}
+
+int64_t aot_sb_append_double(int64_t sb, double v)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%g", v);
+    builder_push_ascii((aot_builder *)(intptr_t)sb, buf, n);
+    return sb;
+}
+
+int64_t aot_sb_append_float(int64_t sb, float v)
+{
+    return aot_sb_append_double(sb, (double)v);
+}
+
+int64_t aot_sb_append_bool(int64_t sb, int32_t v)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    if (v) {
+        builder_push_ascii((aot_builder *)(intptr_t)sb, "true", 4);
+    } else {
+        builder_push_ascii((aot_builder *)(intptr_t)sb, "false", 5);
+    }
+    return sb;
+}
+
+int64_t aot_sb_append_char(int64_t sb, int32_t c)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)(intptr_t)sb;
+    builder_grow(b, 1);
+    b->chars[b->length++] = (uint16_t)c;
+    return sb;
+}
+
+int32_t aot_sb_length(int64_t sb)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    return ((aot_builder *)(intptr_t)sb)->length;
+}
+
+int64_t aot_sb_to_string(int64_t sb)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)(intptr_t)sb;
+    int64_t obj = str_alloc(b->length);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int32_t i = 0; i < b->length; i++) {
+        dst[i] = b->chars[i];
+    }
+    return obj;
+}
+
+int64_t aot_sb_reverse(int64_t sb)
+{
+    if (sb == 0) {
+        return 0;
+    }
+    aot_builder *b = (aot_builder *)(intptr_t)sb;
+    int32_t lo = 0;
+    int32_t hi = b->length - 1;
+    while (lo < hi) {
+        uint16_t t = b->chars[lo];
+        b->chars[lo] = b->chars[hi];
+        b->chars[hi] = t;
+        lo++;
+        hi--;
+    }
+    return sb;
+}
+
+int64_t aot_str_of_char(int32_t c)
+{
+    int64_t obj = str_alloc(1);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    ((uint16_t *)(intptr_t)s->chars)[0] = (uint16_t)c;
+    return obj;
+}
+
+int64_t aot_str_of_bool(int32_t v)
+{
+    const char *txt = v ? "true" : "false";
+    int32_t n = v ? 4 : 5;
+    int64_t obj = str_alloc(n);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int32_t i = 0; i < n; i++) {
+        dst[i] = (uint16_t)(unsigned char)txt[i];
+    }
+    return obj;
+}
+
+int64_t aot_str_of_object(int64_t obj)
+{
+    if (obj != 0) {
+        return obj;
+    }
+    const char *txt = "null";
+    int64_t out = str_alloc(4);
+    if (out == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)out;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int32_t i = 0; i < 4; i++) {
+        dst[i] = (uint16_t)(unsigned char)txt[i];
+    }
+    return out;
+}
+
+int32_t aot_int_parse(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t i = 0;
+    int32_t sign = 1;
+    if (str->length > 0 && (c[0] == '-' || c[0] == '+')) {
+        if (c[0] == '-') {
+            sign = -1;
+        }
+        i = 1;
+    }
+    int64_t acc = 0;
+    while (i < str->length) {
+        uint16_t ch = c[i];
+        if (ch < '0' || ch > '9') {
+            break;
+        }
+        acc = acc * 10 + (ch - '0');
+        if (acc > 2147483648LL) {
+            acc = 2147483648LL;
+        }
+        i++;
+    }
+    return (int32_t)(sign * acc);
+}
+
+int64_t aot_long_parse(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t i = 0;
+    int64_t sign = 1;
+    if (str->length > 0 && (c[0] == '-' || c[0] == '+')) {
+        if (c[0] == '-') {
+            sign = -1;
+        }
+        i = 1;
+    }
+    int64_t acc = 0;
+    while (i < str->length) {
+        uint16_t ch = c[i];
+        if (ch < '0' || ch > '9') {
+            break;
+        }
+        acc = acc * 10 + (ch - '0');
+        i++;
+    }
+    return sign * acc;
+}
+
+int64_t aot_str_to_lower(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    int64_t obj = str_alloc(str->length);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *r = (aot_string *)(intptr_t)obj;
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    uint16_t *dst = (uint16_t *)(intptr_t)r->chars;
+    for (int32_t i = 0; i < str->length; i++) {
+        uint16_t ch = src[i];
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = (uint16_t)(ch + 32);
+        }
+        dst[i] = ch;
+    }
+    return obj;
+}
+
+int64_t aot_str_to_upper(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    int64_t obj = str_alloc(str->length);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *r = (aot_string *)(intptr_t)obj;
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    uint16_t *dst = (uint16_t *)(intptr_t)r->chars;
+    for (int32_t i = 0; i < str->length; i++) {
+        uint16_t ch = src[i];
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (uint16_t)(ch - 32);
+        }
+        dst[i] = ch;
+    }
+    return obj;
+}
+
+int32_t aot_str_starts_with(int64_t s, int64_t prefix)
+{
+    if (s == 0 || prefix == 0) {
+        return 0;
+    }
+    aot_string *a = (aot_string *)(intptr_t)s;
+    aot_string *p = (aot_string *)(intptr_t)prefix;
+    if (p->length > a->length) {
+        return 0;
+    }
+    const uint16_t *ca = (const uint16_t *)(intptr_t)a->chars;
+    const uint16_t *cp = (const uint16_t *)(intptr_t)p->chars;
+    for (int32_t i = 0; i < p->length; i++) {
+        if (ca[i] != cp[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int32_t aot_str_ends_with(int64_t s, int64_t suffix)
+{
+    if (s == 0 || suffix == 0) {
+        return 0;
+    }
+    aot_string *a = (aot_string *)(intptr_t)s;
+    aot_string *p = (aot_string *)(intptr_t)suffix;
+    if (p->length > a->length) {
+        return 0;
+    }
+    const uint16_t *ca = (const uint16_t *)(intptr_t)a->chars;
+    const uint16_t *cp = (const uint16_t *)(intptr_t)p->chars;
+    int32_t off = a->length - p->length;
+    for (int32_t i = 0; i < p->length; i++) {
+        if (ca[off + i] != cp[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int32_t aot_str_contains(int64_t s, int64_t sub)
+{
+    if (s == 0 || sub == 0) {
+        return 0;
+    }
+    aot_string *a = (aot_string *)(intptr_t)s;
+    aot_string *p = (aot_string *)(intptr_t)sub;
+    if (p->length == 0) {
+        return 1;
+    }
+    if (p->length > a->length) {
+        return 0;
+    }
+    const uint16_t *ca = (const uint16_t *)(intptr_t)a->chars;
+    const uint16_t *cp = (const uint16_t *)(intptr_t)p->chars;
+    for (int32_t i = 0; i <= a->length - p->length; i++) {
+        int32_t ok = 1;
+        for (int32_t j = 0; j < p->length; j++) {
+            if (ca[i + j] != cp[j]) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int32_t aot_str_index_of_str(int64_t s, int64_t sub, int32_t from)
+{
+    if (s == 0 || sub == 0) {
+        return -1;
+    }
+    aot_string *a = (aot_string *)(intptr_t)s;
+    aot_string *p = (aot_string *)(intptr_t)sub;
+    if (from < 0) {
+        from = 0;
+    }
+    if (p->length == 0) {
+        return from <= a->length ? from : a->length;
+    }
+    if (p->length > a->length) {
+        return -1;
+    }
+    const uint16_t *ca = (const uint16_t *)(intptr_t)a->chars;
+    const uint16_t *cp = (const uint16_t *)(intptr_t)p->chars;
+    for (int32_t i = from; i <= a->length - p->length; i++) {
+        int32_t ok = 1;
+        for (int32_t j = 0; j < p->length; j++) {
+            if (ca[i + j] != cp[j]) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int64_t aot_str_replace(int64_t s, int32_t from_ch, int32_t to_ch)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    int64_t obj = str_alloc(str->length);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *r = (aot_string *)(intptr_t)obj;
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    uint16_t *dst = (uint16_t *)(intptr_t)r->chars;
+    for (int32_t i = 0; i < str->length; i++) {
+        dst[i] = (int32_t)src[i] == from_ch ? (uint16_t)to_ch : src[i];
+    }
+    return obj;
+}
+
+int64_t aot_str_trim(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t lo = 0;
+    int32_t hi = str->length;
+    while (lo < hi && c[lo] <= ' ') {
+        lo++;
+    }
+    while (hi > lo && c[hi - 1] <= ' ') {
+        hi--;
+    }
+    return aot_str_substring(s, lo, hi);
+}
+
+int32_t aot_str_last_index_of(int64_t s, int32_t ch)
+{
+    if (s == 0) {
+        return -1;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    for (int32_t i = str->length - 1; i >= 0; i--) {
+        if ((int32_t)c[i] == ch) {
+            return i;
+        }
+    }
+    return -1;
+}

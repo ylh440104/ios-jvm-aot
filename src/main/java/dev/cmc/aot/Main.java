@@ -86,6 +86,32 @@ public final class Main {
         declares.add("declare i32 @aot_str_index_of(i64, i32, i32)");
         declares.add("declare i32 @aot_str_compare_to(i64, i64)");
         declares.add("declare i64 @aot_object_hash(i64)");
+        declares.add("declare i64 @aot_sb_new()");
+        declares.add("declare i32 @aot_sb_length(i64)");
+        declares.add("declare i64 @aot_sb_to_string(i64)");
+        declares.add("declare i64 @aot_sb_reverse(i64)");
+        declares.add("declare i64 @aot_sb_append_str(i64, i64)");
+        declares.add("declare i64 @aot_sb_append_int(i64, i32)");
+        declares.add("declare i64 @aot_sb_append_long(i64, i64)");
+        declares.add("declare i64 @aot_sb_append_double(i64, double)");
+        declares.add("declare i64 @aot_sb_append_float(i64, float)");
+        declares.add("declare i64 @aot_sb_append_char(i64, i32)");
+        declares.add("declare i64 @aot_sb_append_bool(i64, i32)");
+        declares.add("declare void @aot_put_char(i32)");
+        declares.add("declare i64 @aot_str_to_lower(i64)");
+        declares.add("declare i64 @aot_str_to_upper(i64)");
+        declares.add("declare i64 @aot_str_trim(i64)");
+        declares.add("declare i32 @aot_str_starts_with(i64, i64)");
+        declares.add("declare i32 @aot_str_ends_with(i64, i64)");
+        declares.add("declare i32 @aot_str_contains(i64, i64)");
+        declares.add("declare i32 @aot_str_index_of_str(i64, i64, i32)");
+        declares.add("declare i64 @aot_str_replace(i64, i32, i32)");
+        declares.add("declare i32 @aot_str_last_index_of(i64, i32)");
+        declares.add("declare i64 @aot_str_of_char(i32)");
+        declares.add("declare i64 @aot_str_of_bool(i32)");
+        declares.add("declare i64 @aot_str_of_object(i64)");
+        declares.add("declare i32 @aot_int_parse(i64)");
+        declares.add("declare i64 @aot_long_parse(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }

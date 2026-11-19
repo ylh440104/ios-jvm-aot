@@ -39,9 +39,6 @@ public final class Natives {
         register("java/lang/Math", "abs", "(I)I", "math_abs", 1, true, false);
         register("java/lang/Math", "max", "(II)I", "math_max", 2, true, false);
         register("java/lang/Math", "min", "(II)I", "math_min", 2, true, false);
-        register("java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", "sb_append_str", 1, true, true);
-        register("java/lang/StringBuilder", "append", "(I)Ljava/lang/StringBuilder;", "sb_append_int", 1, true, false);
-        register("java/lang/StringBuilder", "toString", "()Ljava/lang/String;", "sb_to_string", 0, true, false);
     }
 
     private Natives() {
