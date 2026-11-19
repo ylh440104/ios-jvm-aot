@@ -310,11 +310,14 @@ public final class Layout {
         return sb.toString();
     }
 
-    public String renderRootTable() {
+    public String renderRootTable(StringPool pool) {
         StringBuilder sb = new StringBuilder();
         java.util.List<String> roots = new ArrayList<>();
         roots.add("@.pending_exc");
         roots.addAll(staticFields.keySet());
+        for (int i = 0; i < pool.utf16Values().size(); i++) {
+            roots.add("@.strcache_" + i);
+        }
         sb.append("@.root_slots = global [").append(roots.size()).append(" x ptr] [");
         for (int i = 0; i < roots.size(); i++) {
             if (i > 0) {
@@ -326,8 +329,8 @@ public final class Layout {
         return sb.toString();
     }
 
-    public int rootCount() {
-        return staticFields.size() + 1;
+    public int rootCount(StringPool pool) {
+        return staticFields.size() + 1 + pool.utf16Values().size();
     }
 
     public String resolveImplementation(String cls, String name, String desc) {

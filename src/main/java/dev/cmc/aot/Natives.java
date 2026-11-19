@@ -28,6 +28,8 @@ public final class Natives {
         register("java/io/PrintStream", "println", "(D)V", "print_double", 1, false, false);
         register("java/io/PrintStream", "println", "(F)V", "print_float", 1, false, false);
         register("java/io/PrintStream", "println", "(Z)V", "print_bool", 1, false, false);
+        register("java/io/PrintStream", "println", "(C)V", "print_char", 1, false, false);
+        register("java/io/PrintStream", "print", "(C)V", "print_char_raw", 1, false, false);
         register("java/io/PrintStream", "println", "()V", "print_nl", 0, false, false);
         register("java/io/PrintStream", "print", "(Ljava/lang/String;)V", "print_str_raw", 1, false, true);
         register("java/io/PrintStream", "print", "(I)V", "print_int_raw", 1, false, false);

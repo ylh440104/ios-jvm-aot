@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -324,4 +325,301 @@ int64_t gc_live_bytes(void)
 int64_t gc_heap_size(void)
 {
     return (int64_t)(heap_end - heap_start);
+}
+
+typedef struct {
+    void *vtable;
+    int32_t type_id;
+    int32_t pad0;
+    int64_t chars;
+    int32_t length;
+    int32_t pad1;
+} aot_string;
+
+int32_t aot_string_type_id;
+void *aot_string_vtable;
+int64_t aot_object_type_id;
+
+static int64_t str_alloc(int32_t len)
+{
+    if (len < 0) {
+        return 0;
+    }
+    int64_t char_bytes = (int64_t)len * 2;
+    void *chars = gc_calloc(char_bytes > 0 ? char_bytes : 2, 1);
+    if (!chars) {
+        return 0;
+    }
+    void *obj = gc_alloc(32);
+    if (!obj) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)obj;
+    s->vtable = aot_string_vtable;
+    s->type_id = aot_string_type_id;
+    s->pad0 = 0;
+    s->chars = (int64_t)(intptr_t)chars;
+    s->length = len;
+    s->pad1 = 0;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_str_from_utf16(int64_t chars_ptr, int32_t len)
+{
+    int64_t obj = str_alloc(len);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    const uint16_t *src = (const uint16_t *)(intptr_t)chars_ptr;
+    for (int32_t i = 0; i < len; i++) {
+        dst[i] = src[i];
+    }
+    return obj;
+}
+
+int32_t aot_str_length(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    return ((aot_string *)(intptr_t)s)->length;
+}
+
+int32_t aot_str_char_at(int64_t s, int32_t idx)
+{
+    if (s == 0) {
+        return -1;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    if (idx < 0 || idx >= str->length) {
+        return -1;
+    }
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    return (int32_t)c[idx];
+}
+
+int32_t aot_str_equals(int64_t a, int64_t b)
+{
+    if (a == b) {
+        return 1;
+    }
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    aot_string *x = (aot_string *)(intptr_t)a;
+    aot_string *y = (aot_string *)(intptr_t)b;
+    if (x->length != y->length) {
+        return 0;
+    }
+    const uint16_t *cx = (const uint16_t *)(intptr_t)x->chars;
+    const uint16_t *cy = (const uint16_t *)(intptr_t)y->chars;
+    for (int32_t i = 0; i < x->length; i++) {
+        if (cx[i] != cy[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int32_t aot_str_hash(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t h = 0;
+    for (int32_t i = 0; i < str->length; i++) {
+        h = 31 * h + (int32_t)c[i];
+    }
+    return h;
+}
+
+int64_t aot_str_concat2(int64_t a, int64_t b)
+{
+    aot_string *x = a ? (aot_string *)(intptr_t)a : 0;
+    aot_string *y = b ? (aot_string *)(intptr_t)b : 0;
+    int32_t lx = x ? x->length : 0;
+    int32_t ly = y ? y->length : 0;
+    int64_t obj = str_alloc(lx + ly);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *r = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)r->chars;
+    if (x) {
+        const uint16_t *cx = (const uint16_t *)(intptr_t)x->chars;
+        for (int32_t i = 0; i < lx; i++) {
+            dst[i] = cx[i];
+        }
+    }
+    if (y) {
+        const uint16_t *cy = (const uint16_t *)(intptr_t)y->chars;
+        for (int32_t i = 0; i < ly; i++) {
+            dst[lx + i] = cy[i];
+        }
+    }
+    return obj;
+}
+
+int64_t aot_str_of_int(int32_t v)
+{
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%d", (int)v);
+    int64_t obj = str_alloc(n);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int i = 0; i < n; i++) {
+        dst[i] = (uint16_t)(unsigned char)buf[i];
+    }
+    return obj;
+}
+
+int64_t aot_str_of_long(int64_t v)
+{
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%lld", (long long)v);
+    int64_t obj = str_alloc(n);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int i = 0; i < n; i++) {
+        dst[i] = (uint16_t)(unsigned char)buf[i];
+    }
+    return obj;
+}
+
+int64_t aot_str_of_double(double v)
+{
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%g", v);
+    int64_t obj = str_alloc(n);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    for (int i = 0; i < n; i++) {
+        dst[i] = (uint16_t)(unsigned char)buf[i];
+    }
+    return obj;
+}
+
+void aot_put_char(int32_t ch)
+{
+    uint16_t c = (uint16_t)ch;
+    if (c < 0x80) {
+        putchar((int)c);
+    } else if (c < 0x800) {
+        putchar(0xC0 | (c >> 6));
+        putchar(0x80 | (c & 0x3F));
+    } else {
+        putchar(0xE0 | (c >> 12));
+        putchar(0x80 | ((c >> 6) & 0x3F));
+        putchar(0x80 | (c & 0x3F));
+    }
+}
+
+void aot_str_print(int64_t s)
+{
+    if (s == 0) {
+        fputs("null", stdout);
+        return;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    for (int32_t i = 0; i < str->length; i++) {
+        uint16_t ch = c[i];
+        if (ch < 0x80) {
+            putchar((int)ch);
+        } else if (ch < 0x800) {
+            putchar(0xC0 | (ch >> 6));
+            putchar(0x80 | (ch & 0x3F));
+        } else {
+            putchar(0xE0 | (ch >> 12));
+            putchar(0x80 | ((ch >> 6) & 0x3F));
+            putchar(0x80 | (ch & 0x3F));
+        }
+    }
+}
+
+int64_t aot_str_substring(int64_t s, int32_t from, int32_t to)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    if (from < 0) {
+        from = 0;
+    }
+    if (to > str->length) {
+        to = str->length;
+    }
+    if (to < from) {
+        to = from;
+    }
+    int32_t len = to - from;
+    int64_t obj = str_alloc(len);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *r = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)r->chars;
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    for (int32_t i = 0; i < len; i++) {
+        dst[i] = src[from + i];
+    }
+    return obj;
+}
+
+int32_t aot_str_index_of(int64_t s, int32_t ch, int32_t from)
+{
+    if (s == 0) {
+        return -1;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    if (from < 0) {
+        from = 0;
+    }
+    for (int32_t i = from; i < str->length; i++) {
+        if ((int32_t)c[i] == ch) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int32_t aot_str_compare_to(int64_t a, int64_t b)
+{
+    aot_string *x = a ? (aot_string *)(intptr_t)a : 0;
+    aot_string *y = b ? (aot_string *)(intptr_t)b : 0;
+    const uint16_t *cx = x ? (const uint16_t *)(intptr_t)x->chars : 0;
+    const uint16_t *cy = y ? (const uint16_t *)(intptr_t)y->chars : 0;
+    int32_t lx = x ? x->length : 0;
+    int32_t ly = y ? y->length : 0;
+    int32_t n = lx < ly ? lx : ly;
+    for (int32_t i = 0; i < n; i++) {
+        int32_t d = (int32_t)cx[i] - (int32_t)cy[i];
+        if (d != 0) {
+            return d;
+        }
+    }
+    return lx - ly;
+}
+
+int64_t aot_object_hash(int64_t obj)
+{
+    uint64_t v = (uint64_t)obj;
+    v ^= v >> 33;
+    v *= 0xff51afd7ed558ccdULL;
+    v ^= v >> 33;
+    return (int64_t)(v & 0x7FFFFFFF);
 }

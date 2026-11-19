@@ -68,8 +68,24 @@ public final class Main {
         ir.append("@.pending_exc = global i64 0\n");
         ir.append("@gc_roots = global ptr null\n");
         ir.append("@gc_root_count = global i64 0\n");
-        ir.append(layout.renderRootTable());
+        ir.append(layout.renderRootTable(pool));
+        ir.append(pool.renderUtf16());
+        ir.append(pool.renderStringSlots());
         declares.add("declare void @gc_init(i64)");
+        declares.add("declare i64 @aot_str_from_utf16(i64, i32)");
+        declares.add("declare i64 @aot_str_length(i64)");
+        declares.add("declare i32 @aot_str_char_at(i64, i32)");
+        declares.add("declare i32 @aot_str_equals(i64, i64)");
+        declares.add("declare i32 @aot_str_hash(i64)");
+        declares.add("declare i64 @aot_str_concat2(i64, i64)");
+        declares.add("declare i64 @aot_str_of_int(i32)");
+        declares.add("declare i64 @aot_str_of_long(i64)");
+        declares.add("declare i64 @aot_str_of_double(double)");
+        declares.add("declare void @aot_str_print(i64)");
+        declares.add("declare i64 @aot_str_substring(i64, i32, i32)");
+        declares.add("declare i32 @aot_str_index_of(i64, i32, i32)");
+        declares.add("declare i32 @aot_str_compare_to(i64, i64)");
+        declares.add("declare i64 @aot_object_hash(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
@@ -77,7 +93,8 @@ public final class Main {
         ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
-        ir.append("  store i64 ").append(layout.rootCount()).append(", ptr @gc_root_count\n");
+        ir.append("  store i64 ").append(layout.rootCount(pool)).append(", ptr @gc_root_count\n");
+        ir.append(pool.renderStringInit());
         for (ClassInfo c : classes) {
             MethodNode cl = c.findMethod("<clinit>", "()V");
             if (cl != null) {

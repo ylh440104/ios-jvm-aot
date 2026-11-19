@@ -1355,6 +1355,12 @@ private String currentHandler() {
             invoke(m);
             return;
         }
+        if ("java/lang/String".equals(m.owner) && invokeString(m)) {
+            return;
+        }
+        if (invokeObjectMethod(m)) {
+            return;
+        }
         List<String> kinds = TypeInfo.argKinds(m.desc);
         String[] raw = new String[kinds.size()];
         for (int i = kinds.size() - 1; i >= 0; i--) {
@@ -1416,6 +1422,157 @@ private String currentHandler() {
         pushReturnValue(m.desc, r);
     }
 
+    private boolean invokeString(MethodInsnNode m) {
+        String d = m.desc;
+        switch (m.name + d) {
+            case "length()I" -> {
+                String self = popRef();
+                emitStrCall("aot_str_length", "i32", self);
+                return true;
+            }
+            case "charAt(I)C" -> {
+                String idx = popInt();
+                String self = popRef();
+                emitStrCall2("aot_str_char_at", "i32", self, "i32", idx);
+                return true;
+            }
+            case "equals(Ljava/lang/Object;)Z" -> {
+                String other = popRef();
+                String self = popRef();
+                emitStrCall2("aot_str_equals", "i32", self, "i64", other);
+                return true;
+            }
+            case "hashCode()I" -> {
+                String self = popRef();
+                emitStrCall("aot_str_hash", "i32", self);
+                return true;
+            }
+            case "toString()Ljava/lang/String;" -> {
+                pushRef(popRef());
+                return true;
+            }
+            case "isEmpty()Z" -> {
+                String self = popRef();
+                String lenv = nv("v");
+                body.append("  ").append(lenv).append(" = call i32 @aot_str_length(i64 ").append(self).append(")\n");
+                String z = nv("v");
+                body.append("  ").append(z).append(" = icmp eq i32 ").append(lenv).append(", 0\n");
+                String zi = nv("v");
+                body.append("  ").append(zi).append(" = zext i1 ").append(z).append(" to i32\n");
+                pushInt(zi);
+                return true;
+            }
+            case "substring(I)Ljava/lang/String;" -> {
+                String from = popInt();
+                String self = popRef();
+                String lenv = nv("v");
+                body.append("  ").append(lenv).append(" = call i32 @aot_str_length(i64 ").append(self).append(")\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_substring(i64 ").append(self)
+                    .append(", i32 ").append(from).append(", i32 ").append(lenv).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "substring(II)Ljava/lang/String;" -> {
+                String to = popInt();
+                String from = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_substring(i64 ").append(self)
+                    .append(", i32 ").append(from).append(", i32 ").append(to).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "indexOf(I)I" -> {
+                String ch = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_str_index_of(i64 ").append(self)
+                    .append(", i32 ").append(ch).append(", i32 0)\n");
+                pushInt(r);
+                return true;
+            }
+            case "indexOf(II)I" -> {
+                String from = popInt();
+                String ch = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_str_index_of(i64 ").append(self)
+                    .append(", i32 ").append(ch).append(", i32 ").append(from).append("\n");
+                pushInt(r);
+                return true;
+            }
+            case "compareTo(Ljava/lang/String;)I" -> {
+                String other = popRef();
+                String self = popRef();
+                emitStrCall2("aot_str_compare_to", "i32", self, "i64", other);
+                return true;
+            }
+            case "concat(Ljava/lang/String;)Ljava/lang/String;" -> {
+                String other = popRef();
+                String self = popRef();
+                emitStrCall2("aot_str_concat2", "i64", self, "i64", other);
+                return true;
+            }
+            case "intern()Ljava/lang/String;" -> {
+                pushRef(popRef());
+                return true;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    private String emitStrCall(String fn, String ret, String self) {
+        String r = nv("v");
+        body.append("  ").append(r).append(" = call ").append(ret).append(" @").append(fn)
+            .append("(i64 ").append(self).append(")\n");
+        if ("i32".equals(ret)) {
+            pushInt(r);
+        } else if ("i64".equals(ret)) {
+            pushRef(r);
+        }
+        return r;
+    }
+
+    private String emitStrCall2(String fn, String ret, String a, String at, String b) {
+        String r = nv("v");
+        body.append("  ").append(r).append(" = call ").append(ret).append(" @").append(fn)
+            .append("(i64 ").append(a).append(", ").append(at).append(" ").append(b).append(")\n");
+        if ("i32".equals(ret)) {
+            pushInt(r);
+        } else if ("i64".equals(ret)) {
+            pushRef(r);
+        }
+        return r;
+    }
+
+    private boolean invokeObjectMethod(MethodInsnNode m) {
+        String d = m.desc;
+        if ("hashCode()I".equals(m.name + d)) {
+            String self = popRef();
+            emitStrCall("aot_object_hash", "i32", self);
+            return true;
+        }
+        if ("equals(Ljava/lang/Object;)Z".equals(m.name + d)) {
+            String other = popRef();
+            String self = popRef();
+            String eq = nv("v");
+            body.append("  ").append(eq).append(" = icmp eq i64 ").append(self).append(", ").append(other).append("\n");
+            String zi = nv("v");
+            body.append("  ").append(zi).append(" = zext i1 ").append(eq).append(" to i32\n");
+            pushInt(zi);
+            return true;
+        }
+        if ("getClass()Ljava/lang/Class;".equals(m.name + d)) {
+            popRef();
+            pushIntLit(0);
+            return true;
+        }
+        return false;
+    }
+
     private String retLlvm(String desc) {
         String k = TypeInfo.returnKind(desc);
         return "V".equals(k) ? "i32" : TypeInfo.llvm(k);
@@ -1457,14 +1614,12 @@ private String currentHandler() {
             pop();
         }
         if ("print_str".equals(sig.cName) || "print_str_raw".equals(sig.cName)) {
-            String pv = toPtr(args[0]);
+            declares.add("declare void @aot_str_print(i64)");
+            declares.add("declare i32 @putchar(i32)");
+            String sv = nv("r");
+            body.append("  call void @aot_str_print(i64 ").append(args[0]).append(")\n");
             if ("print_str".equals(sig.cName)) {
-                declares.add("declare i32 @puts(ptr)");
-                body.append("  ").append(nv("r")).append(" = call i32 @puts(ptr ").append(pv).append(")\n");
-            } else {
-                String fmt = pool.internFormat("%s");
-                declares.add("declare i32 @printf(ptr, ...)");
-                body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", ptr ").append(pv).append(")\n");
+                body.append("  ").append(sv).append(" = call i32 @putchar(i32 10)\n");
             }
         } else if ("print_int".equals(sig.cName) || "print_int_raw".equals(sig.cName)) {
             String fmt = pool.internFormat("print_int".equals(sig.cName) ? "%d\\0A" : "%d");
@@ -1507,6 +1662,15 @@ private String currentHandler() {
             body.append("  ").append(fd).append(" = fpext float ").append(ff).append(" to double\n");
             declares.add("declare i32 @printf(ptr, ...)");
             body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", double ").append(fd).append(")\n");
+        } else if ("print_char".equals(sig.cName) || "print_char_raw".equals(sig.cName)) {
+            declares.add("declare void @aot_put_char(i32)");
+            declares.add("declare i32 @putchar(i32)");
+            String cv = nv("v");
+            body.append("  ").append(cv).append(" = trunc i64 ").append(args[0]).append(" to i32\n");
+            body.append("  call void @aot_put_char(i32 ").append(cv).append(")\n");
+            if ("print_char".equals(sig.cName)) {
+                body.append("  ").append(nv("r")).append(" = call i32 @putchar(i32 10)\n");
+            }
         } else if ("print_bool".equals(sig.cName)) {
             String fmt = pool.internFormat("%d\\0A");
             String bv = nv("v");
@@ -1673,10 +1837,14 @@ private String currentHandler() {
     }
 
     private void pushStringLit(String s) {
-        String g = pool.intern(s);
-        String iv = nv("s");
-        body.append("  ").append(iv).append(" = ptrtoint ptr ").append(g).append(" to i64\n");
-        pushRef(iv);
+        String slot = pool.slotFor(s);
+        if (slot == null) {
+            pool.internUtf16(s);
+            slot = pool.slotFor(s);
+        }
+        String v = nv("s");
+        body.append("  ").append(v).append(" = load i64, ptr ").append(slot).append("\n");
+        pushRef(v);
     }
 
     private void pushIntFromLocal(int idx) {
