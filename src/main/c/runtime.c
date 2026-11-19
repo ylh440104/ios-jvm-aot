@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define GC_MAGIC 0x47434F424A4C4CULL
 #define GC_HEADER 16
@@ -339,6 +340,11 @@ typedef struct {
 int32_t aot_string_type_id;
 void *aot_string_vtable;
 int64_t aot_object_type_id;
+
+void aot_set_string_type(int32_t type_id)
+{
+    aot_string_type_id = type_id;
+}
 
 static int64_t str_alloc(int32_t len)
 {
@@ -1157,4 +1163,656 @@ int32_t aot_str_last_index_of(int64_t s, int32_t ch)
         }
     }
     return -1;
+}
+
+int32_t aot_integer_type_id;
+int32_t aot_long_type_id;
+
+void aot_set_integer_type(int32_t type_id)
+{
+    aot_integer_type_id = type_id;
+}
+
+void aot_set_long_type(int32_t type_id)
+{
+    aot_long_type_id = type_id;
+}
+
+int64_t aot_box_new(int32_t v)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_integer_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int32_t *)((char *)obj + 16) = v;
+    return (int64_t)(intptr_t)obj;
+}
+
+int32_t aot_box_int(int64_t box)
+{
+    if (box == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)box + 16);
+}
+
+int64_t aot_long_box_new(int64_t v)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_long_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int64_t *)((char *)obj + 16) = v;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_long_box_get(int64_t box)
+{
+    if (box == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)box + 16);
+}
+
+void aot_print_object(int64_t obj)
+{
+    if (obj == 0) {
+        fputs("null", stdout);
+        return;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)obj + 8);
+    if (tid == aot_string_type_id) {
+        aot_str_print(obj);
+        return;
+    }
+    if (tid == aot_integer_type_id) {
+        printf("%d", aot_box_int(obj));
+        return;
+    }
+    if (tid == aot_long_type_id) {
+        printf("%lld", (long long)aot_long_box_get(obj));
+        return;
+    }
+    printf("obj@%llx", (unsigned long long)(uintptr_t)obj);
+}
+
+int64_t aot_system_nano(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
+
+int64_t aot_system_millis(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (int64_t)ts.tv_sec * 1000LL + (int64_t)(ts.tv_nsec / 1000000L);
+}
+
+void aot_system_arraycopy(int64_t src, int32_t src_pos, int64_t dst, int32_t dst_pos, int32_t len, int32_t width)
+{
+    if (src == 0 || dst == 0 || len <= 0) {
+        return;
+    }
+    char *s = (char *)(intptr_t)src + 24 + (int64_t)src_pos * width;
+    char *d = (char *)(intptr_t)dst + 24 + (int64_t)dst_pos * width;
+    int64_t n = (int64_t)len * width;
+    memmove(d, s, (size_t)n);
+}
+
+void aot_system_gc(void)
+{
+    gc_collect();
+}
+
+int64_t aot_list_new(void)
+{
+    void *obj = gc_alloc(48);
+    if (!obj) {
+        return 0;
+    }
+    int64_t *slot = (int64_t *)((char *)obj + 16);
+    slot[0] = 0;
+    slot[1] = 0;
+    slot[2] = 0;
+    int32_t *cap = (int32_t *)((char *)obj + 40);
+    cap[0] = 0;
+    return (int64_t)(intptr_t)obj;
+}
+
+static int64_t list_slot(int64_t list, int which)
+{
+    return *(int64_t *)((char *)(intptr_t)list + 16 + which * 8);
+}
+
+static int32_t list_cap(int64_t list)
+{
+    return *(int32_t *)((char *)(intptr_t)list + 40);
+}
+
+static void list_set(int64_t list, int which, int64_t v)
+{
+    *(int64_t *)((char *)(intptr_t)list + 16 + which * 8) = v;
+}
+
+static void list_set_cap(int64_t list, int32_t v)
+{
+    *(int32_t *)((char *)(intptr_t)list + 40) = v;
+}
+
+static int64_t list_ensure(int64_t list, int32_t need)
+{
+    int32_t cap = list_cap(list);
+    if (need <= cap) {
+        return list_slot(list, 0);
+    }
+    int32_t ncap = cap < 4 ? 4 : cap * 2;
+    while (ncap < need) {
+        ncap *= 2;
+    }
+    void *buf = gc_calloc((int64_t)ncap * 8, 1);
+    if (!buf) {
+        return 0;
+    }
+    int64_t old = list_slot(list, 0);
+    if (old != 0) {
+        int64_t *os = (int64_t *)(intptr_t)old;
+        int64_t *ns = (int64_t *)buf;
+        int32_t count = (int32_t)list_slot(list, 1);
+        for (int32_t i = 0; i < count; i++) {
+            ns[i] = os[i];
+        }
+    }
+    list_set(list, 0, (int64_t)(intptr_t)buf);
+    list_set_cap(list, ncap);
+    return (int64_t)(intptr_t)buf;
+}
+
+int64_t aot_list_add(int64_t list, int64_t v)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    int64_t buf = list_ensure(list, size + 1);
+    if (buf == 0) {
+        return 0;
+    }
+    ((int64_t *)(intptr_t)buf)[size] = v;
+    list_set(list, 1, size + 1);
+    return 1;
+}
+
+int64_t aot_list_get(int64_t list, int32_t idx)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    if (idx < 0 || idx >= size) {
+        return 0;
+    }
+    return ((int64_t *)(intptr_t)list_slot(list, 0))[idx];
+}
+
+int32_t aot_list_size(int64_t list)
+{
+    if (list == 0) {
+        return 0;
+    }
+    return (int32_t)list_slot(list, 1);
+}
+
+int64_t aot_list_set(int64_t list, int32_t idx, int64_t v)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    if (idx < 0 || idx >= size) {
+        return 0;
+    }
+    ((int64_t *)(intptr_t)list_slot(list, 0))[idx] = v;
+    return v;
+}
+
+int64_t aot_list_remove(int64_t list, int32_t idx)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    if (idx < 0 || idx >= size) {
+        return 0;
+    }
+    int64_t *buf = (int64_t *)(intptr_t)list_slot(list, 0);
+    int64_t old = buf[idx];
+    for (int32_t i = idx; i < size - 1; i++) {
+        buf[i] = buf[i + 1];
+    }
+    list_set(list, 1, size - 1);
+    return old;
+}
+
+int32_t aot_list_is_empty(int64_t list)
+{
+    return aot_list_size(list) == 0 ? 1 : 0;
+}
+
+void aot_list_clear(int64_t list)
+{
+    if (list == 0) {
+        return;
+    }
+    list_set(list, 1, 0);
+}
+
+int32_t aot_list_contains(int64_t list, int64_t v)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    int64_t *buf = (int64_t *)(intptr_t)list_slot(list, 0);
+    for (int32_t i = 0; i < size; i++) {
+        if (buf[i] == v) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int32_t aot_list_index_of(int64_t list, int64_t v)
+{
+    if (list == 0) {
+        return -1;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    int64_t *buf = (int64_t *)(intptr_t)list_slot(list, 0);
+    for (int32_t i = 0; i < size; i++) {
+        if (buf[i] == v) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int64_t aot_list_to_array(int64_t list)
+{
+    if (list == 0) {
+        return 0;
+    }
+    int32_t size = (int32_t)list_slot(list, 1);
+    int64_t total = (int64_t)size * 8 + 24;
+    void *arr = gc_calloc(total, 1);
+    if (!arr) {
+        return 0;
+    }
+    *(int32_t *)((char *)arr + 16) = size;
+    int64_t *dst = (int64_t *)((char *)arr + 24);
+    int64_t *src = (int64_t *)(intptr_t)list_slot(list, 0);
+    for (int32_t i = 0; i < size; i++) {
+        dst[i] = src[i];
+    }
+    return (int64_t)(intptr_t)arr;
+}
+
+int64_t aot_map_new(void)
+{
+    void *obj = gc_alloc(56);
+    if (!obj) {
+        return 0;
+    }
+    memset((char *)obj + 16, 0, 40);
+    return (int64_t)(intptr_t)obj;
+}
+
+static int64_t map_field(int64_t map, int which)
+{
+    return *(int64_t *)((char *)(intptr_t)map + 16 + which * 8);
+}
+
+static void map_set_field(int64_t map, int which, int64_t v)
+{
+    *(int64_t *)((char *)(intptr_t)map + 16 + which * 8) = v;
+}
+
+static int32_t map_hash(int64_t key)
+{
+    uint64_t v = (uint64_t)key;
+    v ^= v >> 33;
+    v *= 0xff51afd7ed558ccdULL;
+    v ^= v >> 33;
+    return (int32_t)(v & 0x7FFFFFFF);
+}
+
+static int64_t map_lookup(int64_t map, int64_t key)
+{
+    int64_t keys = map_field(map, 0);
+    if (keys == 0) {
+        return -1;
+    }
+    int32_t cap = (int32_t)map_field(map, 3);
+    int32_t mask = cap - 1;
+    int32_t slot = map_hash(key) & mask;
+    int64_t *ks = (int64_t *)(intptr_t)keys;
+    for (int32_t probe = 0; probe < cap; probe++) {
+        int32_t cur = (slot + probe) & mask;
+        if (ks[cur] == 0) {
+            return -1;
+        }
+        if (ks[cur] == key) {
+            return cur;
+        }
+    }
+    return -1;
+}
+
+static void map_ensure(int64_t map, int32_t need)
+{
+    int64_t keys = map_field(map, 0);
+    int32_t cap = (int32_t)map_field(map, 3);
+    if (keys != 0 && (int32_t)map_field(map, 2) + need <= cap * 3 / 4) {
+        return;
+    }
+    int32_t ncap = cap < 16 ? 16 : cap * 2;
+    void *nk = gc_calloc((int64_t)ncap * 8, 1);
+    void *nv = gc_calloc((int64_t)ncap * 8, 1);
+    if (!nk || !nv) {
+        return;
+    }
+    int64_t *oldk = (int64_t *)(intptr_t)keys;
+    int64_t *oldv = (int64_t *)(intptr_t)map_field(map, 1);
+    int64_t *nks = (int64_t *)nk;
+    int64_t *nvs = (int64_t *)nv;
+    if (keys != 0) {
+        int32_t mask = ncap - 1;
+        for (int32_t i = 0; i < cap; i++) {
+            int64_t k = oldk[i];
+            if (k == 0) {
+                continue;
+            }
+            int32_t slot = map_hash(k) & mask;
+            for (int32_t probe = 0; probe < ncap; probe++) {
+                int32_t cur = (slot + probe) & mask;
+                if (nks[cur] == 0) {
+                    nks[cur] = k;
+                    nvs[cur] = oldv[i];
+                    break;
+                }
+            }
+        }
+    }
+    map_set_field(map, 0, (int64_t)(intptr_t)nk);
+    map_set_field(map, 1, (int64_t)(intptr_t)nv);
+    map_set_field(map, 2, map_field(map, 2));
+    map_set_field(map, 3, (int64_t)ncap);
+}
+
+int64_t aot_map_put(int64_t map, int64_t key, int64_t value)
+{
+    if (map == 0) {
+        return 0;
+    }
+    map_ensure(map, 1);
+    int64_t keys = map_field(map, 0);
+    int64_t vals = map_field(map, 1);
+    int32_t cap = (int32_t)map_field(map, 3);
+    int32_t mask = cap - 1;
+    int64_t *ks = (int64_t *)(intptr_t)keys;
+    int64_t *vs = (int64_t *)(intptr_t)vals;
+    int32_t slot = map_hash(key) & mask;
+    for (int32_t probe = 0; probe < cap; probe++) {
+        int32_t cur = (slot + probe) & mask;
+        if (ks[cur] == key) {
+            int64_t old = vs[cur];
+            vs[cur] = value;
+            return old;
+        }
+        if (ks[cur] == 0) {
+            ks[cur] = key;
+            vs[cur] = value;
+            map_set_field(map, 2, map_field(map, 2) + 1);
+            return 0;
+        }
+    }
+    return 0;
+}
+
+int64_t aot_map_get(int64_t map, int64_t key)
+{
+    if (map == 0) {
+        return 0;
+    }
+    int64_t idx = map_lookup(map, key);
+    if (idx < 0) {
+        return 0;
+    }
+    int64_t *vs = (int64_t *)(intptr_t)map_field(map, 1);
+    return vs[idx];
+}
+
+int64_t aot_map_remove(int64_t map, int64_t key)
+{
+    if (map == 0) {
+        return 0;
+    }
+    int64_t idx = map_lookup(map, key);
+    if (idx < 0) {
+        return 0;
+    }
+    int64_t *ks = (int64_t *)(intptr_t)map_field(map, 0);
+    int64_t *vs = (int64_t *)(intptr_t)map_field(map, 1);
+    int64_t old = vs[idx];
+    ks[idx] = 0x7FFFFFFFFFFFFFFFLL;
+    vs[idx] = 0;
+    map_set_field(map, 2, map_field(map, 2) - 1);
+    return old;
+}
+
+int32_t aot_map_size(int64_t map)
+{
+    if (map == 0) {
+        return 0;
+    }
+    return (int32_t)map_field(map, 2);
+}
+
+int32_t aot_map_contains(int64_t map, int64_t key)
+{
+    if (map == 0) {
+        return 0;
+    }
+    return map_lookup(map, key) >= 0 ? 1 : 0;
+}
+
+int64_t aot_map_keys(int64_t map)
+{
+    int64_t list = aot_list_new();
+    if (list == 0 || map == 0) {
+        return list;
+    }
+    int64_t keys = map_field(map, 0);
+    if (keys == 0) {
+        return list;
+    }
+    int32_t cap = (int32_t)map_field(map, 3);
+    int64_t *ks = (int64_t *)(intptr_t)keys;
+    for (int32_t i = 0; i < cap; i++) {
+        int64_t k = ks[i];
+        if (k != 0 && k != 0x7FFFFFFFFFFFFFFFLL) {
+            aot_list_add(list, k);
+        }
+    }
+    return list;
+}
+
+int64_t aot_map_values(int64_t map)
+{
+    int64_t list = aot_list_new();
+    if (list == 0 || map == 0) {
+        return list;
+    }
+    int64_t keys = map_field(map, 0);
+    if (keys == 0) {
+        return list;
+    }
+    int32_t cap = (int32_t)map_field(map, 3);
+    int64_t *ks = (int64_t *)(intptr_t)keys;
+    int64_t *vs = (int64_t *)(intptr_t)map_field(map, 1);
+    for (int32_t i = 0; i < cap; i++) {
+        int64_t k = ks[i];
+        if (k != 0 && k != 0x7FFFFFFFFFFFFFFFLL) {
+            aot_list_add(list, vs[i]);
+        }
+    }
+    return list;
+}
+
+void aot_map_clear(int64_t map)
+{
+    if (map == 0) {
+        return;
+    }
+    int32_t cap = (int32_t)map_field(map, 3);
+    if (cap > 0) {
+        int64_t *ks = (int64_t *)(intptr_t)map_field(map, 0);
+        int64_t *vs = (int64_t *)(intptr_t)map_field(map, 1);
+        for (int32_t i = 0; i < cap; i++) {
+            ks[i] = 0;
+            vs[i] = 0;
+        }
+    }
+    map_set_field(map, 2, 0);
+}
+
+int64_t aot_arrays_sort_int(int64_t arr)
+{
+    if (arr == 0) {
+        return 0;
+    }
+    int32_t len = *(int32_t *)((char *)(intptr_t)arr + 16);
+    int32_t *data = (int32_t *)((char *)(intptr_t)arr + 24);
+    for (int32_t i = 1; i < len; i++) {
+        int32_t key = data[i];
+        int32_t j = i - 1;
+        while (j >= 0 && data[j] > key) {
+            data[j + 1] = data[j];
+            j--;
+        }
+        data[j + 1] = key;
+    }
+    return arr;
+}
+
+int32_t aot_arrays_equals_int(int64_t a, int64_t b)
+{
+    if (a == b) {
+        return 1;
+    }
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    int32_t la = *(int32_t *)((char *)(intptr_t)a + 16);
+    int32_t lb = *(int32_t *)((char *)(intptr_t)b + 16);
+    if (la != lb) {
+        return 0;
+    }
+    int32_t *da = (int32_t *)((char *)(intptr_t)a + 24);
+    int32_t *db = (int32_t *)((char *)(intptr_t)b + 24);
+    for (int32_t i = 0; i < la; i++) {
+        if (da[i] != db[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int64_t aot_arrays_sort(int64_t arr)
+{
+    if (arr == 0) {
+        return 0;
+    }
+    int32_t len = *(int32_t *)((char *)(intptr_t)arr + 16);
+    int64_t *data = (int64_t *)((char *)(intptr_t)arr + 24);
+    for (int32_t i = 1; i < len; i++) {
+        int64_t key = data[i];
+        int32_t j = i - 1;
+        while (j >= 0 && data[j] > key) {
+            data[j + 1] = data[j];
+            j--;
+        }
+        data[j + 1] = key;
+    }
+    return arr;
+}
+
+int32_t aot_arrays_equals(int64_t a, int64_t b)
+{
+    if (a == b) {
+        return 1;
+    }
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    int32_t la = *(int32_t *)((char *)(intptr_t)a + 16);
+    int32_t lb = *(int32_t *)((char *)(intptr_t)b + 16);
+    if (la != lb) {
+        return 0;
+    }
+    int64_t *da = (int64_t *)((char *)(intptr_t)a + 24);
+    int64_t *db = (int64_t *)((char *)(intptr_t)b + 24);
+    for (int32_t i = 0; i < la; i++) {
+        if (da[i] != db[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int64_t aot_arrays_copy_of_width(int64_t arr, int32_t newLen, int32_t width)
+{
+    if (arr == 0) {
+        return 0;
+    }
+    int32_t len = *(int32_t *)((char *)(intptr_t)arr + 16);
+    int64_t total = (int64_t)(newLen > 0 ? newLen : 0) * width + 24;
+    void *out = gc_calloc(total, 1);
+    if (!out) {
+        return 0;
+    }
+    *(int32_t *)((char *)out + 16) = newLen;
+    int32_t n = newLen < len ? newLen : len;
+    if (n > 0) {
+        memcpy((char *)out + 24, (char *)(intptr_t)arr + 24, (size_t)((int64_t)n * width));
+    }
+    return (int64_t)(intptr_t)out;
+}
+
+int64_t aot_arrays_copy_of(int64_t arr, int32_t newLen)
+{
+    if (arr == 0) {
+        return 0;
+    }
+    int32_t len = *(int32_t *)((char *)(intptr_t)arr + 16);
+    int64_t total = (int64_t)(newLen > 0 ? newLen : 0) * 8 + 24;
+    void *out = gc_calloc(total, 1);
+    if (!out) {
+        return 0;
+    }
+    *(int32_t *)((char *)out + 16) = newLen;
+    int64_t *src = (int64_t *)((char *)(intptr_t)arr + 24);
+    int64_t *dst = (int64_t *)((char *)out + 24);
+    int32_t n = newLen < len ? newLen : len;
+    for (int32_t i = 0; i < n; i++) {
+        dst[i] = src[i];
+    }
+    return (int64_t)(intptr_t)out;
 }

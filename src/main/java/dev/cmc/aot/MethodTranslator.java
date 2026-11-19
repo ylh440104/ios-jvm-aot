@@ -1045,6 +1045,20 @@ private String currentHandler() {
             pushRef(r);
             return;
         }
+        if ("java/util/ArrayList".equals(cls) || "java/util/LinkedList".equals(cls)
+                || "java/util/Vector".equals(cls) || "java/util/HashSet".equals(cls)) {
+            String r = nv("np");
+            body.append("  ").append(r).append(" = call i64 @aot_list_new()\n");
+            pushRef(r);
+            return;
+        }
+        if ("java/util/HashMap".equals(cls) || "java/util/LinkedHashMap".equals(cls)
+                || "java/util/TreeMap".equals(cls) || "java/util/Hashtable".equals(cls)) {
+            String r = nv("np");
+            body.append("  ").append(r).append(" = call i64 @aot_map_new()\n");
+            pushRef(r);
+            return;
+        }
         if (!layout.hasClass(cls)) {
             fail("unknown class for new: " + cls);
         }
@@ -1337,7 +1351,7 @@ private String currentHandler() {
         }
         String objv = popRef();
         if (m.owner.startsWith("java/")) {
-            if ("java/lang/StringBuilder".equals(m.owner) || "java/lang/StringBuffer".equals(m.owner)) {
+            if (isBuiltinContainer(m.owner)) {
                 return;
             }
             body.append("  ; unimplemented jdk ctor ").append(m.owner).append('.').append(m.name).append("\n");
@@ -1368,6 +1382,9 @@ private String currentHandler() {
             return;
         }
         if (invokeStringBuilder(m)) {
+            return;
+        }
+        if (invokeCollection(m)) {
             return;
         }
         if (invokeObjectMethod(m)) {
@@ -1625,9 +1642,292 @@ private String currentHandler() {
         }
     }
 
+    private boolean isBuiltinContainer(String owner) {
+        return "java/lang/StringBuilder".equals(owner) || "java/lang/StringBuffer".equals(owner)
+            || "java/util/ArrayList".equals(owner) || "java/util/LinkedList".equals(owner)
+            || "java/util/Vector".equals(owner) || "java/util/HashSet".equals(owner)
+            || "java/util/LinkedHashSet".equals(owner) || "java/util/HashMap".equals(owner)
+            || "java/util/LinkedHashMap".equals(owner) || "java/util/TreeMap".equals(owner)
+            || "java/util/Hashtable".equals(owner);
+    }
+
+    private boolean invokeCollection(MethodInsnNode m) {
+        String owner = m.owner;
+        String key = m.name + m.desc;
+        boolean isList = "java/util/ArrayList".equals(owner) || "java/util/LinkedList".equals(owner)
+            || "java/util/Vector".equals(owner) || "java/util/List".equals(owner)
+            || "java/util/Collection".equals(owner) || "java/util/HashSet".equals(owner)
+            || "java/util/LinkedHashSet".equals(owner) || "java/util/Set".equals(owner)
+            || "java/lang/Iterable".equals(owner);
+        boolean isMap = "java/util/HashMap".equals(owner) || "java/util/LinkedHashMap".equals(owner)
+            || "java/util/TreeMap".equals(owner) || "java/util/Hashtable".equals(owner)
+            || "java/util/Map".equals(owner);
+        if (isList) {
+            if ("add(Ljava/lang/Object;)Z".equals(key)) {
+                String v = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_list_add(i64 ").append(self)
+                    .append(", i64 ").append(v).append(")\n");
+                pushIntLit(1);
+                return true;
+            }
+            if ("get(I)Ljava/lang/Object;".equals(key)) {
+                String idx = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_list_get(i64 ").append(self)
+                    .append(", i32 ").append(idx).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("size()I".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_list_size(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("set(ILjava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+                String v = popRef();
+                String idx = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_list_set(i64 ").append(self)
+                    .append(", i32 ").append(idx).append(", i64 ").append(v).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("remove(I)Ljava/lang/Object;".equals(key)) {
+                String idx = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_list_remove(i64 ").append(self)
+                    .append(", i32 ").append(idx).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("isEmpty()Z".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_list_is_empty(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("clear()V".equals(key)) {
+                String self = popRef();
+                body.append("  call void @aot_list_clear(i64 ").append(self).append(")\n");
+                return true;
+            }
+            if ("contains(Ljava/lang/Object;)Z".equals(key)) {
+                String v = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_list_contains(i64 ").append(self)
+                    .append(", i64 ").append(v).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("indexOf(Ljava/lang/Object;)I".equals(key)) {
+                String v = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_list_index_of(i64 ").append(self)
+                    .append(", i64 ").append(v).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("toArray()[Ljava/lang/Object;".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_list_to_array(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            return false;
+        }
+        if (isMap) {
+            if ("put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+                String v = popRef();
+                String k = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_map_put(i64 ").append(self)
+                    .append(", i64 ").append(k).append(", i64 ").append(v).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("get(Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+                String k = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_map_get(i64 ").append(self)
+                    .append(", i64 ").append(k).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("remove(Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+                String k = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_map_remove(i64 ").append(self)
+                    .append(", i64 ").append(k).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("size()I".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_map_size(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("isEmpty()Z".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_map_size(i64 ").append(self).append(")\n");
+                String z = nv("v");
+                body.append("  ").append(z).append(" = icmp eq i32 ").append(r).append(", 0\n");
+                String zi = nv("v");
+                body.append("  ").append(zi).append(" = zext i1 ").append(z).append(" to i32\n");
+                pushInt(zi);
+                return true;
+            }
+            if ("containsKey(Ljava/lang/Object;)Z".equals(key)) {
+                String k = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_map_contains(i64 ").append(self)
+                    .append(", i64 ").append(k).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("containsValue(Ljava/lang/Object;)Z".equals(key)) {
+                String v = popRef();
+                String self = popRef();
+                String kl = nv("v");
+                body.append("  ").append(kl).append(" = call i64 @aot_map_keys(i64 ").append(self).append(")\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_list_contains(i64 ").append(kl)
+                    .append(", i64 ").append(v).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("keySet()Ljava/util/Set;".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_map_keys(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("values()Ljava/util/Collection;".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_map_values(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("clear()V".equals(key)) {
+                String self = popRef();
+                body.append("  call void @aot_map_clear(i64 ").append(self).append(")\n");
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
     private boolean invokeStaticJdk(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
+        if ("java/lang/System".equals(owner)) {
+            if ("nanoTime()J".equals(key)) {
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_system_nano()\n");
+                pushLong(r);
+                return true;
+            }
+            if ("currentTimeMillis()J".equals(key)) {
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_system_millis()\n");
+                pushLong(r);
+                return true;
+            }
+            if ("arraycopy(Ljava/lang/Object;ILjava/lang/Object;II)V".equals(key)) {
+                String len = popInt();
+                String dpos = popInt();
+                String dst = popRef();
+                String spos = popInt();
+                String src = popRef();
+                int width = 8;
+                org.objectweb.asm.Type[] at = org.objectweb.asm.Type.getArgumentTypes(m.desc);
+                if (at.length == 5) {
+                    org.objectweb.asm.Type t0 = at[0];
+                    if (t0.getSort() == org.objectweb.asm.Type.ARRAY) {
+                        String ed = t0.getElementType().getDescriptor();
+                        width = switch (ed) {
+                            case "B", "Z" -> 1;
+                            case "C", "S" -> 2;
+                            case "I", "F" -> 4;
+                            case "J", "D" -> 8;
+                            default -> 8;
+                        };
+                    }
+                }
+                body.append("  call void @aot_system_arraycopy(i64 ").append(src).append(", i32 ").append(spos)
+                    .append(", i64 ").append(dst).append(", i32 ").append(dpos).append(", i32 ").append(len)
+                    .append(", i32 ").append(width).append(")\n");
+                return true;
+            }
+            if ("gc()V".equals(key)) {
+                body.append("  call void @aot_system_gc()\n");
+                return true;
+            }
+            return false;
+        }
+        if ("java/util/Arrays".equals(owner)) {
+            if ("sort([I)V".equals(key)) {
+                String arr = popRef();
+                body.append("  call i64 @aot_arrays_sort_int(i64 ").append(arr).append(")\n");
+                return true;
+            }
+            if ("sort([J)V".equals(key) || "sort([Ljava/lang/Object;)V".equals(key)) {
+                String arr = popRef();
+                body.append("  call i64 @aot_arrays_sort(i64 ").append(arr).append(")\n");
+                return true;
+            }
+            if ("equals([I[I)Z".equals(key)) {
+                String b = popRef();
+                String a = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_arrays_equals_int(i64 ").append(a)
+                    .append(", i64 ").append(b).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("equals([J[J)Z".equals(key)
+                    || "equals([Ljava/lang/Object;[Ljava/lang/Object;)Z".equals(key)) {
+                String b = popRef();
+                String a = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_arrays_equals(i64 ").append(a)
+                    .append(", i64 ").append(b).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("copyOf([II)[I".equals(key) || "copyOf([JI)[J".equals(key)
+                    || "copyOf([Ljava/lang/Object;I)[Ljava/lang/Object;".equals(key)) {
+                String n = popInt();
+                String arr = popRef();
+                int width = "copyOf([II)[I".equals(key) ? 4 : 8;
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_arrays_copy_of_width(i64 ").append(arr)
+                    .append(", i32 ").append(n).append(", i32 ").append(width).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            return false;
+        }
         if ("java/lang/String".equals(owner)) {
             if ("valueOf(I)Ljava/lang/String;".equals(key)) {
                 String v = popInt();
@@ -1691,8 +1991,17 @@ private String currentHandler() {
                 return true;
             }
             if ("valueOf(I)Ljava/lang/Integer;".equals(key)) {
-                popInt();
-                pushIntLit(0);
+                String v = popInt();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_box_new(i32 ").append(v).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("intValue()I".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
+                pushInt(r);
                 return true;
             }
             if ("toString(I)Ljava/lang/String;".equals(key)) {
@@ -1710,6 +2019,13 @@ private String currentHandler() {
                 String r = nv("v");
                 body.append("  ").append(r).append(" = call i64 @aot_long_parse(i64 ").append(v).append(")\n");
                 pushLong(r);
+                return true;
+            }
+            if ("valueOf(J)Ljava/lang/Long;".equals(key)) {
+                String v = popLong();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_long_box_new(i64 ").append(v).append(")\n");
+                pushRef(r);
                 return true;
             }
             if ("toString(J)Ljava/lang/String;".equals(key)) {
@@ -1854,7 +2170,40 @@ private String currentHandler() {
 
     private boolean invokeObjectMethod(MethodInsnNode m) {
         String d = m.desc;
-        if ("hashCode()I".equals(m.name + d)) {
+        String key = m.name + d;
+        if ("intValue()I".equals(key)) {
+            String self = popRef();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
+            pushInt(r);
+            return true;
+        }
+        if ("longValue()J".equals(key)) {
+            String self = popRef();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_long_box_get(i64 ").append(self).append(")\n");
+            pushLong(r);
+            return true;
+        }
+        if ("doubleValue()D".equals(key)) {
+            String self = popRef();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_box_int(i64 ").append(self).append(")\n");
+            String dv = nv("v");
+            body.append("  ").append(dv).append(" = sitofp i32 ").append(r).append(" to double\n");
+            pushDouble(dv);
+            return true;
+        }
+        if ("floatValue()F".equals(key)) {
+            String self = popRef();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
+            String fv = nv("v");
+            body.append("  ").append(fv).append(" = sitofp i32 ").append(r).append(" to float\n");
+            pushFloat(fv);
+            return true;
+        }
+        if ("hashCode()I".equals(key)) {
             String self = popRef();
             emitStrCall("aot_object_hash", "i32", self);
             return true;
@@ -1966,6 +2315,11 @@ private String currentHandler() {
             body.append("  ").append(fd).append(" = fpext float ").append(ff).append(" to double\n");
             declares.add("declare i32 @printf(ptr, ...)");
             body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", double ").append(fd).append(")\n");
+        } else if ("print_obj".equals(sig.cName)) {
+            declares.add("declare void @aot_print_object(i64)");
+            declares.add("declare i32 @putchar(i32)");
+            body.append("  call void @aot_print_object(i64 ").append(args[0]).append(")\n");
+            body.append("  ").append(nv("r")).append(" = call i32 @putchar(i32 10)\n");
         } else if ("print_char".equals(sig.cName) || "print_char_raw".equals(sig.cName)) {
             declares.add("declare void @aot_put_char(i32)");
             declares.add("declare i32 @putchar(i32)");

@@ -23,6 +23,7 @@ public final class Natives {
 
     static {
         register("java/io/PrintStream", "println", "(Ljava/lang/String;)V", "print_str", 1, false, true);
+        register("java/io/PrintStream", "println", "(Ljava/lang/Object;)V", "print_obj", 1, false, true);
         register("java/io/PrintStream", "println", "(I)V", "print_int", 1, false, false);
         register("java/io/PrintStream", "println", "(J)V", "print_long", 1, false, false);
         register("java/io/PrintStream", "println", "(D)V", "print_double", 1, false, false);

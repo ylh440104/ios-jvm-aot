@@ -62,33 +62,42 @@ public final class Layout {
     }
 
     private final Map<String, String> typeTables = new LinkedHashMap<>();
+    private final List<String> tableTargets = new ArrayList<>();
 
     public String assignTable(String target) {
         String existing = typeTables.get(target);
         if (existing != null) {
             return existing;
         }
-        int slots = Math.max(typeIds.size() + 1, 2);
-        StringBuilder vals = new StringBuilder();
-        java.util.Set<Integer> marked = new java.util.HashSet<>();
-        for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
-            if (ancestryOf(e.getKey()).contains(target)) {
-                marked.add(e.getValue());
-            }
-        }
-        for (int i = 0; i < slots; i++) {
-            if (i > 0) {
-                vals.append(", ");
-            }
-            vals.append("i32 ").append(marked.contains(i) ? "1" : "0");
-        }
+        typeId(target);
         String label = "@.typetbl_" + ClassParser.mangle(target, "t", "()V");
         typeTables.put(target, label);
-        pendingTables.append(label).append(" = private unnamed_addr constant [").append(slots)
-            .append(" x i32] [").append(vals).append("]\n");
+        tableTargets.add(target);
         return label;
     }
 
+    public String renderTypeTables() {
+        StringBuilder out = new StringBuilder();
+        int slots = Math.max(typeIds.size() + 1, 2);
+        for (String target : tableTargets) {
+            StringBuilder vals = new StringBuilder();
+            java.util.Set<Integer> marked = new java.util.HashSet<>();
+            for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
+                if (ancestryOf(e.getKey()).contains(target)) {
+                    marked.add(e.getValue());
+                }
+            }
+            for (int i = 0; i < slots; i++) {
+                if (i > 0) {
+                    vals.append(", ");
+                }
+                vals.append("i32 ").append(marked.contains(i) ? "1" : "0");
+            }
+            out.append(typeTables.get(target)).append(" = private unnamed_addr constant [").append(slots)
+                .append(" x i32] [").append(vals).append("]\n");
+        }
+        return out.toString();
+    }
     private final Map<String, java.util.Set<String>> ancestryCache = new java.util.HashMap<>();
 
     private java.util.Set<String> ancestryOf(String cls) {
@@ -110,12 +119,6 @@ public final class Layout {
         }
         ancestryCache.put(cls, out);
         return out;
-    }
-
-    private final StringBuilder pendingTables = new StringBuilder();
-
-    public String renderTypeTables() {
-        return pendingTables.toString();
     }
 
     public int typeTableSlots() {
@@ -155,6 +158,19 @@ public final class Layout {
         addBuiltin("java/lang/IllegalArgumentException", "java/lang/RuntimeException");
         addBuiltin("java/lang/UnsupportedOperationException", "java/lang/RuntimeException");
         addBuiltin("java/lang/OutOfMemoryError", "java/lang/Object");
+        addBuiltin("java/lang/String", "java/lang/Object");
+        addBuiltin("java/lang/CharSequence", "java/lang/Object");
+        addBuiltin("java/lang/StringBuilder", "java/lang/Object");
+        addBuiltin("java/lang/StringBuffer", "java/lang/Object");
+        addBuiltin("java/lang/Integer", "java/lang/Object");
+        addBuiltin("java/lang/Long", "java/lang/Object");
+        addBuiltin("java/lang/Boolean", "java/lang/Object");
+        addBuiltin("java/lang/Double", "java/lang/Object");
+        addBuiltin("java/lang/Float", "java/lang/Object");
+        addBuiltin("java/lang/Short", "java/lang/Object");
+        addBuiltin("java/lang/Byte", "java/lang/Object");
+        addBuiltin("java/lang/Character", "java/lang/Object");
+        addBuiltin("java/lang/Number", "java/lang/Object");
     }
 
     private void addBuiltin(String name, String superName) {

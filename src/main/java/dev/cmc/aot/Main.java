@@ -112,6 +112,44 @@ public final class Main {
         declares.add("declare i64 @aot_str_of_object(i64)");
         declares.add("declare i32 @aot_int_parse(i64)");
         declares.add("declare i64 @aot_long_parse(i64)");
+        declares.add("declare i64 @aot_system_nano()");
+        declares.add("declare i64 @aot_system_millis()");
+        declares.add("declare void @aot_system_arraycopy(i64, i32, i64, i32, i32, i32)");
+        declares.add("declare i64 @aot_arrays_copy_of_width(i64, i32, i32)");
+        declares.add("declare void @aot_system_gc()");
+        declares.add("declare i64 @aot_list_new()");
+        declares.add("declare i64 @aot_list_add(i64, i64)");
+        declares.add("declare i64 @aot_list_get(i64, i32)");
+        declares.add("declare i32 @aot_list_size(i64)");
+        declares.add("declare i64 @aot_list_set(i64, i32, i64)");
+        declares.add("declare i64 @aot_list_remove(i64, i32)");
+        declares.add("declare i32 @aot_list_is_empty(i64)");
+        declares.add("declare void @aot_list_clear(i64)");
+        declares.add("declare i32 @aot_list_contains(i64, i64)");
+        declares.add("declare i32 @aot_list_index_of(i64, i64)");
+        declares.add("declare i64 @aot_list_to_array(i64)");
+        declares.add("declare i64 @aot_map_new()");
+        declares.add("declare i64 @aot_map_put(i64, i64, i64)");
+        declares.add("declare i64 @aot_map_get(i64, i64)");
+        declares.add("declare i64 @aot_map_remove(i64, i64)");
+        declares.add("declare i32 @aot_map_size(i64)");
+        declares.add("declare i32 @aot_map_contains(i64, i64)");
+        declares.add("declare i64 @aot_map_keys(i64)");
+        declares.add("declare i64 @aot_map_values(i64)");
+        declares.add("declare void @aot_map_clear(i64)");
+        declares.add("declare i64 @aot_arrays_sort(i64)");
+        declares.add("declare i64 @aot_arrays_sort_int(i64)");
+        declares.add("declare i32 @aot_arrays_equals_int(i64, i64)");
+        declares.add("declare i32 @aot_arrays_equals(i64, i64)");
+        declares.add("declare i64 @aot_arrays_copy_of(i64, i32)");
+        declares.add("declare i64 @aot_box_new(i32)");
+        declares.add("declare i32 @aot_box_int(i64)");
+        declares.add("declare i64 @aot_long_box_new(i64)");
+        declares.add("declare i64 @aot_long_box_get(i64)");
+        declares.add("declare void @aot_set_string_type(i32)");
+        declares.add("declare void @aot_set_integer_type(i32)");
+        declares.add("declare void @aot_set_long_type(i32)");
+        declares.add("declare void @aot_print_object(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
@@ -120,6 +158,9 @@ public final class Main {
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
         ir.append("  store i64 ").append(layout.rootCount(pool)).append(", ptr @gc_root_count\n");
+        ir.append("  call void @aot_set_string_type(i32 ").append(layout.typeId("java/lang/String")).append(")\n");
+        ir.append("  call void @aot_set_integer_type(i32 ").append(layout.typeId("java/lang/Integer")).append(")\n");
+        ir.append("  call void @aot_set_long_type(i32 ").append(layout.typeId("java/lang/Long")).append(")\n");
         ir.append(pool.renderStringInit());
         for (ClassInfo c : classes) {
             MethodNode cl = c.findMethod("<clinit>", "()V");
