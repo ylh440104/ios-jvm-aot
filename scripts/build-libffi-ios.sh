@@ -17,16 +17,18 @@ if [ "$SDK_KIND" = "simulator" ]; then
     TARGET="arm64-apple-ios${IOS_VER}-simulator"
     SDKNAME="iphonesimulator"
     TRAMP=0
+    MMAPWRIT=1
 else
     TARGET="arm64-apple-ios${IOS_VER}"
     SDKNAME="iphoneos"
     TRAMP=1
+    MMAPWRIT=0
 fi
 
 sh "$FFI/gen-headers.sh" "$HDR" "$TRAMP" 0 AARCH64
 
 SDKPATH=$(xcrun --sdk "$SDKNAME" --show-sdk-path)
-CFLAGS="-target $TARGET -isysroot $SDKPATH -O2 -fPIC -DFFI_EXEC_TRAMPOLINE_TABLE=$TRAMP"
+CFLAGS="-target $TARGET -isysroot $SDKPATH -O2 -fPIC -DFFI_EXEC_TRAMPOLINE_TABLE=$TRAMP -DFFI_MMAP_EXEC_WRIT=$MMAPWRIT"
 INC="-I$FFI/src/aarch64 -I$HDR -I$FFI/include -I$FFI/src -I$FFI"
 
 OBJS=""
