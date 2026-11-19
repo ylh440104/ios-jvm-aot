@@ -199,6 +199,10 @@ public final class Main {
         declares.add("declare void @aot_set_reflect_array_types(i32, i32)");
         declares.add("declare void @aot_set_char_array_type(i32)");
         declares.add("declare void @aot_set_string_array_type(i32)");
+        declares.add("declare void @aot_set_char_box_type(i32)");
+        declares.add("declare void @aot_set_bool_box_type(i32)");
+        declares.add("declare i64 @aot_box_char(i32)");
+        declares.add("declare i64 @aot_box_bool(i32)");
         declares.add("declare i64 @aot_str_split(i64, i64)");
         declares.add("declare i64 @aot_str_to_char_array(i64)");
         declares.add("declare i64 @aot_str_repeat(i64, i32)");
@@ -212,6 +216,8 @@ public final class Main {
         String reflectMetaInit = ReflectSupport.renderMetaInit(layout);
         int charArrayTid = layout.typeId("[C");
         int stringArrayTid = layout.typeId("[Ljava/lang/String;");
+        int charBoxTid = layout.typeId("java/lang/Character");
+        int boolBoxTid = layout.typeId("java/lang/Boolean");
         ir.append(layout.renderTypeTables());
         ir.append(layout.renderClassNameTable());
         ir.append(ReflectSupport.renderMeta(layout));
@@ -228,6 +234,8 @@ public final class Main {
         ir.append("  call void @aot_set_string_type(i32 ").append(layout.typeId("java/lang/String")).append(")\n");
         ir.append("  call void @aot_set_char_array_type(i32 ").append(charArrayTid).append(")\n");
         ir.append("  call void @aot_set_string_array_type(i32 ").append(stringArrayTid).append(")\n");
+        ir.append("  call void @aot_set_char_box_type(i32 ").append(charBoxTid).append(")\n");
+        ir.append("  call void @aot_set_bool_box_type(i32 ").append(boolBoxTid).append(")\n");
         ir.append("  call void @aot_set_integer_type(i32 ").append(layout.typeId("java/lang/Integer")).append(")\n");
         ir.append("  call void @aot_set_long_type(i32 ").append(layout.typeId("java/lang/Long")).append(")\n");
         ir.append(pool.renderStringInit());

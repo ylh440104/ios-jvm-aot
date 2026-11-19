@@ -63,6 +63,7 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Reflect11 -o build/rm.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Str2 -o build/s2.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Arr6 -o build/ar6.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Fmt1 -o build/f1.ll
 
       - name: Verify IR is well formed
         run: |
@@ -74,7 +75,7 @@ jobs:
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg IndyTest:iy LambdaTest:lm ReflectTest:rc Reflect2:rd Reflect3:re Reflect5:rh Reflect6:ri Reflect8:rj Reflect9:rk Reflect10:rl Reflect11:rm Str2:s2 Arr6:ar6; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg IndyTest:iy LambdaTest:lm ReflectTest:rc Reflect2:rd Reflect3:re Reflect5:rh Reflect6:ri Reflect8:rj Reflect9:rk Reflect10:rl Reflect11:rm Str2:s2 Arr6:ar6 Fmt1:f1; do
             name="${t%%:*}"
             tag="${t##*:}"
             clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread

@@ -2267,6 +2267,19 @@ String objv = popRef();
             return false;
         }
         if ("java/lang/String".equals(owner)) {
+            if ("format(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;".equals(key)) {
+                String arr = popRef();
+                String fmt = popRef();
+                declares.add("declare i64 @aot_object_array_ptr(i64)");
+                declares.add("declare i64 @aot_str_format(i64, i64)");
+                String ap = nv("v");
+                body.append("  ").append(ap).append(" = call i64 @aot_object_array_ptr(i64 ").append(arr).append(")\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_format(i64 ").append(fmt)
+                    .append(", i64 ").append(ap).append(")\n");
+                pushRef(r);
+                return true;
+            }
             if ("valueOf(I)Ljava/lang/String;".equals(key)) {
                 String v = popInt();
                 String r = nv("v");
@@ -2320,9 +2333,44 @@ String objv = popRef();
             }
             return false;
         }
+        if ("java/lang/Character".equals(owner)) {
+            if ("valueOf(C)Ljava/lang/Character;".equals(key)) {
+                String v = popInt();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_box_char(i32 ").append(v).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("charValue()C".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            return false;
+        }
+        if ("java/lang/Boolean".equals(owner)) {
+            if ("valueOf(Z)Ljava/lang/Boolean;".equals(key)) {
+                String v = popInt();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_box_bool(i32 ").append(v).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("booleanValue()Z".equals(key)) {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            return false;
+        }
         if ("java/lang/Integer".equals(owner)) {
             if ("parseInt(Ljava/lang/String;)I".equals(key)) {
                 String v = popRef();
+                emitParseGuard(v);
                 String r = nv("v");
                 body.append("  ").append(r).append(" = call i32 @aot_int_parse(i64 ").append(v).append(")\n");
                 pushInt(r);
@@ -2354,6 +2402,7 @@ String objv = popRef();
         if ("java/lang/Long".equals(owner)) {
             if ("parseLong(Ljava/lang/String;)J".equals(key)) {
                 String v = popRef();
+                emitParseGuard(v);
                 String r = nv("v");
                 body.append("  ").append(r).append(" = call i64 @aot_long_parse(i64 ").append(v).append(")\n");
                 pushLong(r);
@@ -2376,6 +2425,21 @@ String objv = popRef();
             return false;
         }
         return false;
+    }
+
+    private void emitParseGuard(String sv) {
+        declares.add("declare i32 @aot_int_parse_ok(i64)");
+        String ok = nv("pg");
+        body.append("  ").append(ok).append(" = call i32 @aot_int_parse_ok(i64 ").append(sv).append(")\n");
+        String bad = nv("pg");
+        body.append("  ").append(bad).append(" = icmp eq i32 ").append(ok).append(", 0\n");
+        String badBr = "nfe" + (tmp++);
+        String okBr = "nfok" + (tmp++);
+        body.append("  br i1 ").append(bad).append(", label %").append(badBr).append(", label %").append(okBr).append("\n");
+        body.append(badBr).append(":\n");
+        throwBuiltin("java/lang/NumberFormatException");
+        body.append(okBr).append(":\n");
+        terminated = false;
     }
 
     private boolean invokeStringBuilder(MethodInsnNode m) {

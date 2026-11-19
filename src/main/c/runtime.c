@@ -415,6 +415,8 @@ int32_t aot_integer_type_id;
 int32_t aot_long_type_id;
 int32_t aot_char_array_type_id;
 int32_t aot_string_array_type_id;
+int32_t aot_char_box_type_id;
+int32_t aot_bool_box_type_id;
 int32_t aot_class_type_id;
 int32_t aot_str_equals(int64_t a, int64_t b);
 int64_t aot_str_substring(int64_t s, int32_t from, int32_t to);
@@ -972,6 +974,16 @@ void aot_set_char_array_type(int32_t type_id)
 void aot_set_string_array_type(int32_t type_id)
 {
     aot_string_array_type_id = type_id;
+}
+
+void aot_set_char_box_type(int32_t type_id)
+{
+    aot_char_box_type_id = type_id;
+}
+
+void aot_set_bool_box_type(int32_t type_id)
+{
+    aot_bool_box_type_id = type_id;
 }
 
 void aot_set_string_type(int32_t type_id)
@@ -1846,6 +1858,33 @@ int64_t aot_str_of_object(int64_t obj)
     return out;
 }
 
+int32_t aot_int_parse_ok(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t i = 0;
+    if (str->length == 0) {
+        return 0;
+    }
+    if (c[0] == '-' || c[0] == '+') {
+        i = 1;
+        if (str->length == 1) {
+            return 0;
+        }
+    }
+    while (i < str->length) {
+        uint16_t ch = c[i];
+        if (ch < '0' || ch > '9') {
+            return 0;
+        }
+        i++;
+    }
+    return 1;
+}
+
 int32_t aot_int_parse(int64_t s)
 {
     if (s == 0) {
@@ -2113,6 +2152,32 @@ void aot_set_integer_type(int32_t type_id)
 void aot_set_long_type(int32_t type_id)
 {
     aot_long_type_id = type_id;
+}
+
+int64_t aot_box_char(int32_t v)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_char_box_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int32_t *)((char *)obj + 16) = v;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_box_bool(int32_t v)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_bool_box_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int32_t *)((char *)obj + 16) = v != 0 ? 1 : 0;
+    return (int64_t)(intptr_t)obj;
 }
 
 int64_t aot_box_new(int32_t v)
@@ -2958,4 +3023,183 @@ int64_t aot_arrays_copy_of(int64_t arr, int32_t newLen)
         dst[i] = src[i];
     }
     return (int64_t)(intptr_t)out;
+}
+static int64_t fmt_buf;
+static int32_t fmt_len;
+
+static void fmt_reset(int32_t cap)
+{
+    fmt_buf = str_alloc(cap);
+    fmt_len = 0;
+}
+
+static aot_string *fmt_str(void)
+{
+    return (aot_string *)(intptr_t)fmt_buf;
+}
+
+static void fmt_put(uint16_t ch)
+{
+    aot_string *s = fmt_str();
+    if (fmt_len >= s->length) {
+        int32_t ncap = s->length * 2 + 8;
+        int64_t nb = str_alloc(ncap);
+        uint16_t *src = (uint16_t *)(intptr_t)s->chars;
+        uint16_t *dst = (uint16_t *)(intptr_t)((aot_string *)(intptr_t)nb)->chars;
+        for (int32_t i = 0; i < fmt_len; i++) {
+            dst[i] = src[i];
+        }
+        fmt_buf = nb;
+        s = fmt_str();
+    }
+    ((uint16_t *)(intptr_t)s->chars)[fmt_len++] = ch;
+}
+
+static void fmt_puts(const uint16_t *src, int32_t n)
+{
+    for (int32_t i = 0; i < n; i++) {
+        fmt_put(src[i]);
+    }
+}
+
+static void fmt_put_str(int64_t sv)
+{
+    if (sv == 0) {
+        return;
+    }
+    aot_string *s = (aot_string *)(intptr_t)sv;
+    fmt_puts((const uint16_t *)(intptr_t)s->chars, s->length);
+}
+
+static void fmt_put_padded(int64_t sv, int32_t width, int32_t zero)
+{
+    int32_t n = aot_str_length(sv);
+    if (width > n) {
+        int32_t pad = width - n;
+        for (int32_t i = 0; i < pad; i++) {
+            fmt_put(zero ? '0' : ' ');
+        }
+    }
+    fmt_put_str(sv);
+}
+
+static int64_t fmt_hex(uint32_t v)
+{
+    uint16_t buf[16];
+    int32_t p = 0;
+    if (v == 0) {
+        buf[p++] = '0';
+    }
+    while (v > 0 && p < 16) {
+        uint32_t d = v & 0xF;
+        buf[p++] = (uint16_t)(d < 10 ? ('0' + d) : ('a' + d - 10));
+        v >>= 4;
+    }
+    int64_t out = str_alloc(p);
+    if (out == 0) {
+        return 0;
+    }
+    uint16_t *dst = (uint16_t *)(intptr_t)((aot_string *)(intptr_t)out)->chars;
+    for (int32_t i = 0; i < p; i++) {
+        dst[i] = buf[p - 1 - i];
+    }
+    return out;
+}
+
+int64_t aot_str_format(int64_t fmt, int64_t args)
+{
+    int32_t n = aot_str_length(fmt);
+    if (fmt == 0) {
+        return str_alloc(0);
+    }
+    aot_string *f = (aot_string *)(intptr_t)fmt;
+    const uint16_t *fc = (const uint16_t *)(intptr_t)f->chars;
+    int32_t argc = 0;
+    int64_t *av = 0;
+    if (args != 0) {
+        argc = *(int32_t *)((char *)(intptr_t)args - 8);
+        av = (int64_t *)(intptr_t)args;
+    }
+    fmt_reset(n + 16);
+    int32_t argi = 0;
+    int32_t i = 0;
+    while (i < n) {
+        uint16_t ch = fc[i];
+        if (ch != '%') {
+            fmt_put(ch);
+            i++;
+            continue;
+        }
+        i++;
+        if (i >= n) {
+            fmt_put('%');
+            break;
+        }
+        if (fc[i] == '%') {
+            fmt_put('%');
+            i++;
+            continue;
+        }
+        int32_t zero = 0;
+        int32_t width = 0;
+        if (fc[i] == '0') {
+            zero = 1;
+            i++;
+        }
+        while (i < n && fc[i] >= '0' && fc[i] <= '9') {
+            width = width * 10 + (fc[i] - '0');
+            i++;
+        }
+        if (i < n && fc[i] == 'l') {
+            i++;
+        }
+        if (i >= n) {
+            break;
+        }
+        uint16_t cv = fc[i];
+        i++;
+        int64_t a = 0;
+        if (argi < argc) {
+            a = av[argi];
+        }
+        argi++;
+        if (cv != 's' && a != 0) {
+            int32_t atid = *(int32_t *)((char *)(intptr_t)a + 8);
+            if (atid == aot_integer_type_id) {
+                a = (int64_t)*(int32_t *)((char *)(intptr_t)a + 16);
+            } else if (atid == aot_long_type_id) {
+                a = *(int64_t *)((char *)(intptr_t)a + 16);
+            } else if (atid == aot_char_box_type_id) {
+                a = (int64_t)*(int32_t *)((char *)(intptr_t)a + 16);
+            } else if (atid == aot_bool_box_type_id) {
+                a = (int64_t)*(int32_t *)((char *)(intptr_t)a + 16);
+            }
+        }
+        if (cv == 'd' || cv == 'd') {
+            fmt_put_padded(aot_str_of_int((int32_t)a), width, zero);
+        } else if (cv == 'x') {
+            fmt_put_padded(fmt_hex((uint32_t)a), width, zero);
+        } else if (cv == 'c') {
+            fmt_put((uint16_t)(a & 0xFFFF));
+        } else if (cv == 'b') {
+            fmt_put_padded(aot_str_of_bool((int32_t)a), width, zero);
+        } else if (cv == 's') {
+            int64_t s = a;
+            if (s != 0) {
+                int32_t tid = *(int32_t *)((char *)(intptr_t)s + 8);
+                if (tid != aot_string_type_id) {
+                    s = aot_str_of_object(s);
+                }
+            }
+            fmt_put_padded(s, width, zero);
+        } else if (cv == 'f') {
+            fmt_put_padded(aot_str_of_double(0.0), width, zero);
+        } else {
+            fmt_put('%');
+            fmt_put(cv);
+        }
+    }
+    aot_string *o = fmt_str();
+    o->length = fmt_len;
+    return fmt_buf;
 }
