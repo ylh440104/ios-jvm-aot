@@ -2469,6 +2469,25 @@ String objv = popRef();
             pushFloat(fv);
             return true;
         }
+        if ("getName()Ljava/lang/String;".equals(key)) {
+            String self = popRef();
+            declares.add("declare i64 @aot_class_get_name(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_get_name(i64 ").append(self).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("getSimpleName()Ljava/lang/String;".equals(key)) {
+            String self = popRef();
+            declares.add("declare i64 @aot_class_get_name(i64)");
+            declares.add("declare i64 @aot_str_simple_name(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_get_name(i64 ").append(self).append(")\n");
+            String s = nv("v");
+            body.append("  ").append(s).append(" = call i64 @aot_str_simple_name(i64 ").append(r).append(")\n");
+            pushRef(s);
+            return true;
+        }
         if ("hashCode()I".equals(key)) {
             String self = popRef();
             emitStrCall("aot_object_hash", "i32", self);
@@ -2485,8 +2504,11 @@ String objv = popRef();
             return true;
         }
         if ("getClass()Ljava/lang/Class;".equals(m.name + d)) {
-            popRef();
-            pushIntLit(0);
+            String self = popRef();
+            declares.add("declare i64 @aot_class_of(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_of(i64 ").append(self).append(")\n");
+            pushRef(r);
             return true;
         }
         return false;

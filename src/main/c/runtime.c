@@ -413,6 +413,109 @@ void *aot_string_vtable;
 int64_t aot_object_type_id;
 int32_t aot_integer_type_id;
 int32_t aot_long_type_id;
+int32_t aot_class_type_id;
+int32_t aot_str_equals(int64_t a, int64_t b);
+int64_t aot_str_substring(int64_t s, int32_t from, int32_t to);
+static int64_t *class_cache;
+static int32_t class_cache_size;
+static int64_t *class_names;
+static int32_t class_count;
+
+void aot_set_class_type(int32_t type_id)
+{
+    aot_class_type_id = type_id;
+}
+
+void aot_set_class_table(int64_t *names, int32_t count)
+{
+    class_names = names;
+    class_count = count;
+    class_cache_size = count + 1;
+    class_cache = (int64_t *)calloc((size_t)class_cache_size, sizeof(int64_t));
+}
+
+int64_t aot_class_of_type(int32_t type_id)
+{
+    if (type_id <= 0 || type_id >= class_cache_size) {
+        return 0;
+    }
+    if (class_cache[type_id] != 0) {
+        return class_cache[type_id];
+    }
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_class_type_id;
+    *(int32_t *)((char *)obj + 12) = type_id;
+    *(int64_t *)((char *)obj + 16) = class_names[type_id];
+    class_cache[type_id] = (int64_t)(intptr_t)obj;
+    return class_cache[type_id];
+}
+
+int64_t aot_class_of(int64_t obj)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)obj + 8);
+    return aot_class_of_type(tid);
+}
+
+int32_t aot_class_id(int64_t cls)
+{
+    if (cls == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)cls + 12);
+}
+
+int64_t aot_class_get_name(int64_t cls)
+{
+    if (cls == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)cls + 16);
+}
+
+int64_t aot_str_simple_name(int64_t s)
+{
+    if (s == 0) {
+        return 0;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *c = (const uint16_t *)(intptr_t)str->chars;
+    int32_t lastDot = -1;
+    int32_t lastDollar = -1;
+    for (int32_t i = 0; i < str->length; i++) {
+        if (c[i] == '.') {
+            lastDot = i;
+        } else if (c[i] == '$') {
+            lastDollar = i;
+        }
+    }
+    int32_t from = lastDot > lastDollar ? lastDot : lastDollar;
+    return aot_str_substring(s, from + 1, str->length);
+}
+
+int64_t aot_class_for_name(int64_t name)
+{
+    if (name == 0 || class_names == 0) {
+        return 0;
+    }
+    for (int32_t i = 1; i < class_cache_size; i++) {
+        if (class_names[i] != 0 && aot_str_equals(class_names[i], name)) {
+            return aot_class_of_type(i);
+        }
+    }
+    for (int32_t i = 1; i < class_cache_size; i++) {
+        if (class_names[i] != 0 && aot_str_equals(aot_str_simple_name(class_names[i]), name)) {
+            return aot_class_of_type(i);
+        }
+    }
+    return 0;
+}
 
 void aot_set_string_type(int32_t type_id)
 {

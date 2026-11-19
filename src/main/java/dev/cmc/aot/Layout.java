@@ -202,6 +202,12 @@ public final class Layout {
         addBuiltin("java/util/HashMap", "java/lang/Object");
         addBuiltin("java/util/LinkedHashMap", "java/lang/Object");
         addBuiltin("java/util/Arrays", "java/lang/Object");
+        addBuiltin("java/lang/Class", "java/lang/Object");
+        addBuiltin("java/lang/reflect/Field", "java/lang/Object");
+        addBuiltin("java/lang/reflect/Method", "java/lang/Object");
+        addBuiltin("java/lang/reflect/AccessibleObject", "java/lang/Object");
+        addBuiltin("java/io/Serializable", "java/lang/Object");
+        addBuiltin("java/lang/Cloneable", "java/lang/Object");
     }
 
     private void addBuiltin(String name, String superName) {
@@ -432,5 +438,53 @@ public final class Layout {
 
     public boolean hasSlot(String name, String desc) {
         return slots.containsKey(name + desc);
+    }
+
+    public String renderClassNameTable() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("@.class_names = global [").append(maxTypeId() + 1).append(" x i64] zeroinitializer\n");
+        for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
+            String dotted = e.getKey().replace('/', '.');
+            sb.append("@.cname_").append(e.getValue()).append(" = private constant [")
+                .append(dotted.length()).append(" x i8] c\"")
+                .append(escapeAsmString(dotted)).append("\"\n");
+        }
+        return sb.toString();
+    }
+
+    public List<String> classNameInit(StringPool pool) {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
+            String dotted = e.getKey().replace('/', '.');
+            out.add("  %cn" + e.getValue() + " = call i64 @aot_str_from_utf8(i64 "
+                + "ptrtoint (ptr @.cname_" + e.getValue() + " to i64), i32 " + dotted.length() + ")");
+            out.add("  %cnp" + e.getValue() + " = getelementptr [" + (maxTypeId() + 1) + " x i64], ptr @.class_names, i64 0, i32 "
+                + e.getValue());
+            out.add("  store i64 %cn" + e.getValue() + ", ptr %cnp" + e.getValue());
+        }
+        return out;
+    }
+
+    public int maxTypeId() {
+        int max = 0;
+        for (Integer v : typeIds.values()) {
+            if (v > max) {
+                max = v;
+            }
+        }
+        return max;
+    }
+
+    private static String escapeAsmString(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= 32 && c < 127 && c != '"' && c != '\\') {
+                sb.append(c);
+            } else {
+                sb.append(String.format("\\%02X", (int) c));
+            }
+        }
+        return sb.toString();
     }
 }
