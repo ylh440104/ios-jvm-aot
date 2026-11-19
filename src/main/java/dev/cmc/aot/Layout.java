@@ -323,6 +323,67 @@ public final class Layout {
         return new ArrayList<>(classes.values());
     }
 
+    public List<String> typeDescTable() {
+        int max = maxTypeId();
+        String[] arr = new String[max];
+        for (Map.Entry<String, Integer> e : new java.util.LinkedHashMap<>(typeIds).entrySet()) {
+            int id = e.getValue();
+            if (id > 0 && id < max) {
+                arr[id] = jvmDesc(e.getKey());
+            }
+        }
+        return java.util.Arrays.asList(arr);
+    }
+
+    private static String jvmDesc(String name) {
+        if (name.length() == 1) {
+            return name;
+        }
+        if (name.startsWith("[")) {
+            return name;
+        }
+        return "L" + name + ";";
+    }
+
+    public String renderTypeDescTable() {
+        List<String> descs = typeDescTable();
+        StringBuilder sb = new StringBuilder();
+        sb.append("@.type_desc = global [").append(descs.size()).append(" x i64] zeroinitializer\n");
+        int i = 0;
+        for (String d : descs) {
+            if (d == null) {
+                i++;
+                continue;
+            }
+            String esc = escapeAsmString(d);
+            sb.append("@.tdesc_").append(i).append(" = private constant [").append(esc.length())
+                .append(" x i8] c\"").append(esc).append("\"\n");
+            i++;
+        }
+        return sb.toString();
+    }
+
+    public String renderTypeDescInit() {
+        List<String> descs = typeDescTable();
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        for (String d : descs) {
+            if (d == null) {
+                i++;
+                continue;
+            }
+            String esc = escapeAsmString(d);
+            sb.append("  %td").append(i).append(" = call i64 @aot_str_from_utf8(i64 ptrtoint (ptr @.tdesc_")
+                .append(i).append(" to i64), i32 ").append(esc.length()).append(")\n");
+            sb.append("  %tp").append(i).append(" = getelementptr [").append(descs.size())
+                .append(" x i64], ptr @.type_desc, i64 0, i32 ").append(i).append("\n");
+            sb.append("  store i64 %td").append(i).append(", ptr %tp").append(i).append("\n");
+            i++;
+        }
+        sb.append("  call void @aot_set_type_desc_table(ptr @.type_desc, i32 ").append(descs.size()).append(")\n");
+        return sb.toString();
+    }
+
     public int fieldOffset(String owner, String name) {
         Integer off = fieldOffsets.get(owner + "#" + name);
         if (off != null) {

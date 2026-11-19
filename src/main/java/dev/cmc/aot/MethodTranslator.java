@@ -537,6 +537,12 @@ public final class MethodTranslator {
                 FieldInsnNode f = (FieldInsnNode) insn;
                 if (Natives.isSystemOut(f.owner, f.name)) {
                     pushIntLit(0);
+                } else if (isPrimitiveTypeField(f.owner, f.name)) {
+                    declares.add("declare i64 @aot_class_of_type(i32)");
+                    String r = nv("v");
+                    body.append("  ").append(r).append(" = call i64 @aot_class_of_type(i32 ")
+                        .append(layout.typeId(primitiveDesc(f.owner))).append(")\n");
+                    pushRef(r);
                 } else {
                     String sv = nv("sv");
                     body.append("  ").append(sv).append(" = load i64, ptr ").append(staticLabel(f)).append("\n");
@@ -1069,6 +1075,28 @@ private String currentHandler() {
 
     private int typeTableSlots() {
         return layout.typeTableSlots();
+    }
+
+    private static boolean isPrimitiveTypeField(String owner, String name) {
+        if (!"TYPE".equals(name)) {
+            return false;
+        }
+        return primitiveDesc(owner) != null;
+    }
+
+    private static String primitiveDesc(String owner) {
+        return switch (owner) {
+            case "java/lang/Integer" -> "I";
+            case "java/lang/Long" -> "J";
+            case "java/lang/Short" -> "S";
+            case "java/lang/Byte" -> "B";
+            case "java/lang/Character" -> "C";
+            case "java/lang/Boolean" -> "Z";
+            case "java/lang/Float" -> "F";
+            case "java/lang/Double" -> "D";
+            case "java/lang/Void" -> "V";
+            default -> null;
+        };
     }
 
     private void newObject(TypeInsnNode tn) {
@@ -2475,6 +2503,57 @@ String objv = popRef();
             String fv = nv("v");
             body.append("  ").append(fv).append(" = sitofp i32 ").append(r).append(" to float\n");
             pushFloat(fv);
+            return true;
+        }
+        if ("getDeclaredFields()[Ljava/lang/reflect/Field;".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_class_declared_fields(i32)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_declared_fields(i32 ").append(cid).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("getDeclaredMethods()[Ljava/lang/reflect/Method;".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_class_declared_methods(i32)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_declared_methods(i32 ").append(cid).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("getDeclaredConstructor([Ljava/lang/Class;)Ljava/lang/reflect/Constructor;".equals(key)) {
+            String arr = popRef();
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_ctor_desc_of(i64)");
+            declares.add("declare i64 @aot_ctor_lookup(i32, i64)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String dv = nv("v");
+            body.append("  ").append(dv).append(" = call i64 @aot_ctor_desc_of(i64 ").append(arr).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_ctor_lookup(i32 ").append(cid)
+                .append(", i64 ").append(dv).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("newInstance([Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+            String arr = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_object_array_ptr(i64)");
+            declares.add("declare i64 @aot_ctor_new_instance(i64, i64)");
+            String ap = nv("v");
+            body.append("  ").append(ap).append(" = call i64 @aot_object_array_ptr(i64 ").append(arr).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_ctor_new_instance(i64 ").append(self)
+                .append(", i64 ").append(ap).append(")\n");
+            pushRef(r);
             return true;
         }
         if ("getDeclaredMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;".equals(key)) {

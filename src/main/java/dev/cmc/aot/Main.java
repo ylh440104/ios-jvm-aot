@@ -180,21 +180,38 @@ public final class Main {
         declares.add("declare void @aot_set_field_meta_table(ptr, i32)");
         declares.add("declare void @aot_set_method_meta_table(ptr, i32)");
         declares.add("declare i64 @aot_object_array_ptr(i64)");
+        String methodMetaDecl = MethodSupport.renderMethodMeta(layout);
+        String methodMetaInit = MethodSupport.renderMethodMetaInit(layout);
+        String methodTrampolines = MethodSupport.renderTrampolines(layout) + MethodSupport.renderDispatch(layout);
+        String ctorMetaDecl = MethodSupport.renderCtorMeta(layout);
+        String ctorMetaInit = MethodSupport.renderCtorMetaInit(layout);
+        String ctorWrappers = MethodSupport.renderCtorWrappers(layout);
+        String typeDescDecl = layout.renderTypeDescTable();
+        String typeDescInit = layout.renderTypeDescInit();
+        declares.add("declare void @aot_set_type_desc_table(ptr, i32)");
+        declares.add("declare i64 @aot_ctor_desc_of(i64)");
+        declares.add("declare i64 @aot_ctor_lookup(i32, i64)");
+        declares.add("declare i64 @aot_ctor_new_instance(i64, i64)");
+        declares.add("declare i64 @aot_class_declared_fields(i32)");
+        declares.add("declare i64 @aot_class_declared_methods(i32)");
+        declares.add("declare void @aot_set_ctor_type(i32)");
+        declares.add("declare void @aot_set_ctor_meta_table(ptr, i32)");
+        declares.add("declare void @aot_set_reflect_array_types(i32, i32)");
         declares.add("declare void @aot_print_object(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
         ir.append('\n').append(funcs);
         String reflectMetaInit = ReflectSupport.renderMetaInit(layout);
-        String methodMetaDecl = MethodSupport.renderMethodMeta(layout);
-        String methodMetaInit = MethodSupport.renderMethodMetaInit(layout);
-        String methodTrampolines = MethodSupport.renderTrampolines(layout) + MethodSupport.renderDispatch(layout);
         ir.append(layout.renderTypeTables());
         ir.append(layout.renderClassNameTable());
         ir.append(ReflectSupport.renderMeta(layout));
         ir.append(methodMetaDecl);
+        ir.append(ctorMetaDecl);
+        ir.append(typeDescDecl);
         ir.append(extraFuncs);
         ir.append(methodTrampolines);
+        ir.append(ctorWrappers);
         ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
@@ -212,6 +229,10 @@ public final class Main {
         ir.append("  call void @aot_set_method_type(i32 ").append(layout.typeId("java/lang/reflect/Method")).append(")\n");
         ir.append(reflectMetaInit);
         ir.append(methodMetaInit);
+        ir.append(ctorMetaInit);
+        ir.append(typeDescInit);
+        ir.append("  call void @aot_set_ctor_type(i32 ").append(layout.typeId("java/lang/reflect/Constructor")).append(")\n");
+        ir.append("  call void @aot_set_reflect_array_types(i32 ").append(layout.typeId("[Ljava/lang/reflect/Field;")).append(", i32 ").append(layout.typeId("[Ljava/lang/reflect/Method;")).append(")\n");
         for (ClassInfo c : classes) {
             MethodNode cl = c.findMethod("<clinit>", "()V");
             if (cl != null) {

@@ -694,6 +694,106 @@ int64_t aot_object_array_ptr(int64_t arr)
     return arr + 24;
 }
 
+typedef struct {
+    int64_t owner_tid;
+    int64_t desc;
+    int64_t fn;
+    int64_t arg_count;
+} ctor_meta_rec;
+
+static ctor_meta_rec *ctor_meta_table;
+static int32_t ctor_meta_count;
+static int32_t aot_ctor_type_id;
+
+void aot_set_ctor_type(int32_t type_id)
+{
+    aot_ctor_type_id = type_id;
+}
+
+void aot_set_ctor_meta_table(int64_t *data, int32_t count)
+{
+    ctor_meta_table = (ctor_meta_rec *)(intptr_t)data;
+    ctor_meta_count = count;
+}
+
+int64_t aot_ctor_new(int32_t owner_tid, int64_t desc)
+{
+    void *obj = gc_alloc(32);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_ctor_type_id;
+    *(int32_t *)((char *)obj + 12) = owner_tid;
+    *(int64_t *)((char *)obj + 16) = desc;
+    *(int64_t *)((char *)obj + 24) = 0;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_ctor_lookup(int32_t owner_tid, int64_t desc)
+{
+    if (ctor_meta_table == 0) {
+        return 0;
+    }
+    for (int32_t i = 0; i < ctor_meta_count; i++) {
+        ctor_meta_rec *m = &ctor_meta_table[i];
+        if ((int32_t)m->owner_tid != owner_tid) {
+            continue;
+        }
+        if (m->desc != 0 && aot_str_equals(m->desc, desc)) {
+            int64_t c = aot_ctor_new(owner_tid, m->desc);
+            if (c != 0) {
+                *(int64_t *)((char *)(intptr_t)c + 24) = m->fn;
+            }
+            return c;
+        }
+    }
+    return 0;
+}
+
+int64_t aot_unbox_any(int64_t o)
+{
+    if (o == 0) {
+        return 0;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)o + 8);
+    if (tid == aot_integer_type_id) {
+        return *(int32_t *)((char *)(intptr_t)o + 16);
+    }
+    if (tid == aot_long_type_id) {
+        return *(int64_t *)((char *)(intptr_t)o + 16);
+    }
+    return o;
+}
+
+int64_t aot_ctor_new_instance(int64_t ctor, int64_t args)
+{
+    if (ctor == 0) {
+        return 0;
+    }
+    int64_t fn = *(int64_t *)((char *)(intptr_t)ctor + 24);
+    if (fn == 0) {
+        return 0;
+    }
+    if (args != 0) {
+        int64_t *data = (int64_t *)(intptr_t)args;
+        int32_t n = *(int32_t *)((char *)(intptr_t)args - 8);
+        for (int32_t i = 0; i < n; i++) {
+            data[i] = aot_unbox_any(data[i]);
+        }
+    }
+    int64_t (*f)(int64_t) = (int64_t (*)(int64_t))(intptr_t)fn;
+    return f(args);
+}
+
+int64_t aot_ctor_name(int64_t ctor)
+{
+    if (ctor == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)ctor + 16);
+}
+
 int64_t aot_method_invoke(int64_t method, int64_t target, int64_t args)
 {
     if (method == 0 || aot_mslot_dispatch == 0) {
@@ -746,6 +846,120 @@ int64_t aot_field_lookup(int32_t owner_tid, int64_t name)
         }
     }
     return 0;
+}
+static int32_t aot_field_array_type_id;
+static int32_t aot_method_array_type_id;
+
+void aot_set_reflect_array_types(int32_t field_tid, int32_t method_tid)
+{
+    aot_field_array_type_id = field_tid;
+    aot_method_array_type_id = method_tid;
+}
+
+int64_t aot_class_declared_fields(int32_t owner_tid)
+{
+    if (field_meta_table == 0) {
+        return 0;
+    }
+    int32_t n = 0;
+    for (int32_t i = 0; i < field_meta_count; i++) {
+        if ((int32_t)field_meta_table[i].owner_tid == owner_tid) {
+            n++;
+        }
+    }
+    void *obj = gc_alloc(24 + (int64_t)n * 8);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = 0;
+    *(int32_t *)((char *)obj + 8) = aot_field_array_type_id;
+    *(int32_t *)((char *)obj + 16) = n;
+    int64_t *data = (int64_t *)((char *)obj + 24);
+    int32_t k = 0;
+    for (int32_t i = 0; i < field_meta_count; i++) {
+        field_meta_rec *m = &field_meta_table[i];
+        if ((int32_t)m->owner_tid != owner_tid) {
+            continue;
+        }
+        data[k++] = aot_field_new(owner_tid, (int32_t)m->offset, (int32_t)m->kind, m->name, (int32_t)m->is_static);
+    }
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_class_declared_methods(int32_t owner_tid)
+{
+    if (method_meta_table == 0) {
+        return 0;
+    }
+    int32_t n = 0;
+    for (int32_t i = 0; i < method_meta_count; i++) {
+        if ((int32_t)method_meta_table[i].owner_tid == owner_tid) {
+            n++;
+        }
+    }
+    void *obj = gc_alloc(24 + (int64_t)n * 8);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = 0;
+    *(int32_t *)((char *)obj + 8) = aot_method_array_type_id;
+    *(int32_t *)((char *)obj + 16) = n;
+    int64_t *data = (int64_t *)((char *)obj + 24);
+    int32_t k = 0;
+    for (int32_t i = 0; i < method_meta_count; i++) {
+        method_meta_rec *m = &method_meta_table[i];
+        if ((int32_t)m->owner_tid != owner_tid) {
+            continue;
+        }
+        data[k++] = aot_method_new(owner_tid, (int32_t)m->slot, m->name, (int32_t)m->ret_kind);
+    }
+    return (int64_t)(intptr_t)obj;
+}
+
+static int64_t *type_desc_table;
+static int32_t type_desc_count;
+
+int32_t aot_class_id(int64_t cls);
+int64_t aot_str_from_utf8(int64_t chars, int32_t len);
+int64_t aot_str_concat2(int64_t a, int64_t b);
+
+void aot_set_type_desc_table(int64_t *data, int32_t count)
+{
+    type_desc_table = data;
+    type_desc_count = count;
+}
+
+int64_t aot_ctor_desc_of(int64_t arr)
+{
+    char buf[512];
+    int32_t p = 0;
+    buf[p++] = '(';
+    if (arr != 0) {
+        int32_t n = *(int32_t *)((char *)(intptr_t)arr + 16);
+        int64_t *data = (int64_t *)((char *)(intptr_t)arr + 24);
+        for (int32_t i = 0; i < n && p < 480; i++) {
+            int32_t tid = (int32_t)aot_class_id(data[i]);
+            int64_t d = 0;
+            if (tid > 0 && tid < type_desc_count) {
+                d = type_desc_table[tid];
+            }
+            if (d == 0) {
+                const char *fb = "Ljava/lang/Object;";
+                for (const char *q = fb; *q != 0 && p < 490; q++) {
+                    buf[p++] = *q;
+                }
+                continue;
+            }
+            aot_string *s = (aot_string *)(intptr_t)d;
+            const uint16_t *cs = (const uint16_t *)(intptr_t)s->chars;
+            for (int32_t k = 0; k < s->length && p < 490; k++) {
+                buf[p++] = (char)cs[k];
+            }
+        }
+    }
+    buf[p++] = ')';
+    buf[p++] = 'V';
+    return aot_str_from_utf8((int64_t)(intptr_t)buf, p);
 }
 
 void aot_set_string_type(int32_t type_id)
