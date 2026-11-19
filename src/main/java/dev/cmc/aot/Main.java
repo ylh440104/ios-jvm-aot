@@ -171,6 +171,7 @@ public final class Main {
         }
         ir.append('\n').append(funcs);
         ir.append(ThreadSupport.render(classes, layout));
+        ir.append(ToStringSupport.render(classes, layout));
         ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");

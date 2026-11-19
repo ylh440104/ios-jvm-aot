@@ -50,6 +50,7 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry CollTest -o build/cl.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ThreadTest -o build/th.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ThreadGc -o build/tg.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry IndyTest -o build/iy.ll
 
       - name: Verify IR is well formed
         run: |
@@ -61,7 +62,7 @@ jobs:
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg IndyTest:iy; do
             name="${t%%:*}"
             tag="${t##*:}"
             clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread

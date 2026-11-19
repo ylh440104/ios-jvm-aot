@@ -6,6 +6,7 @@ import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.IntInsnNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
@@ -531,6 +532,7 @@ public final class MethodTranslator {
             case Opcodes.FASTORE -> arrayStoreF32();
             case Opcodes.GETFIELD -> getField((FieldInsnNode) insn);
             case Opcodes.PUTFIELD -> putField((FieldInsnNode) insn);
+            case Opcodes.INVOKEDYNAMIC -> invokeDynamic((InvokeDynamicInsnNode) insn);
             case Opcodes.GETSTATIC -> {
                 FieldInsnNode f = (FieldInsnNode) insn;
                 if (Natives.isSystemOut(f.owner, f.name)) {
@@ -1705,6 +1707,106 @@ private String currentHandler() {
             || "java/util/LinkedHashSet".equals(owner) || "java/util/HashMap".equals(owner)
             || "java/util/LinkedHashMap".equals(owner) || "java/util/TreeMap".equals(owner)
             || "java/util/Hashtable".equals(owner);
+    }
+
+    private void invokeDynamic(InvokeDynamicInsnNode insn) {
+        String bsm = insn.bsm.getOwner();
+        if (!"java/lang/invoke/StringConcatFactory".equals(bsm)) {
+            fail("unsupported invokedynamic bootstrap " + bsm);
+            return;
+        }
+        String recipeText;
+        if (insn.bsmArgs.length >= 1 && insn.bsmArgs[0] instanceof String r) {
+            recipeText = r;
+        } else {
+            fail("string concat without recipe");
+            return;
+        }
+        List<String> argKinds = TypeInfo.argKinds(insn.desc);
+        String[] slots = new String[argKinds.size()];
+        org.objectweb.asm.Type[] argTypes = org.objectweb.asm.Type.getArgumentTypes(insn.desc);
+        for (int i = argKinds.size() - 1; i >= 0; i--) {
+            slots[i] = popOfKind(argKinds.get(i));
+        }
+        declares.add("declare i64 @aot_indy_begin()");
+        declares.add("declare i64 @aot_indy_end(i64)");
+        String sbv = nv("sb");
+        body.append("  ").append(sbv).append(" = call i64 @aot_indy_begin()\n");
+        int argIdx = 0;
+        int i = 0;
+        while (i < recipeText.length()) {
+            char c = recipeText.charAt(i);
+            if (c == '\u0001') {
+                if (argIdx < argKinds.size()) {
+                    emitIndyArgTyped(sbv, argKinds.get(argIdx), argTypes[argIdx], slots[argIdx]);
+                    argIdx++;
+                }
+                i++;
+            } else if (c == '\u0002') {
+                if (i + 1 < recipeText.length()) {
+                    char lit = recipeText.charAt(i + 1);
+                    pushStringLit(String.valueOf(lit));
+                    String sv = pop();
+                    emitIndyArg(sbv, "L", sv);
+                }
+                i += 2;
+            } else {
+                int j = i;
+                StringBuilder litBuilder = new StringBuilder();
+                while (j < recipeText.length() && recipeText.charAt(j) != '\u0001' && recipeText.charAt(j) != '\u0002') {
+                    litBuilder.append(recipeText.charAt(j));
+                    j++;
+                }
+                if (litBuilder.length() > 0) {
+                    pushStringLit(litBuilder.toString());
+                    String sv = pop();
+                    emitIndyArg(sbv, "L", sv);
+                }
+                i = j;
+            }
+        }
+        String res = nv("v");
+        body.append("  ").append(res).append(" = call i64 @aot_indy_end(i64 ").append(sbv).append(")\n");
+        pushRef(res);
+    }
+
+    private void emitIndyArgTyped(String sbv, String kind, org.objectweb.asm.Type type, String value) {
+        if (type != null && type.getSort() == org.objectweb.asm.Type.CHAR) {
+            declares.add("declare i64 @aot_indy_char(i64, i32)");
+            body.append("  call i64 @aot_indy_char(i64 ").append(sbv).append(", i32 ").append(value).append(")\n");
+            return;
+        }
+        if (type != null && type.getSort() == org.objectweb.asm.Type.BOOLEAN) {
+            declares.add("declare i64 @aot_indy_bool(i64, i32)");
+            body.append("  call i64 @aot_indy_bool(i64 ").append(sbv).append(", i32 ").append(value).append(")\n");
+            return;
+        }
+        emitIndyArg(sbv, kind, value);
+    }
+
+    private void emitIndyArg(String sbv, String kind, String value) {
+        switch (kind) {
+            case "I" -> {
+                declares.add("declare i64 @aot_indy_int(i64, i32)");
+                body.append("  call i64 @aot_indy_int(i64 ").append(sbv).append(", i32 ").append(value).append(")\n");
+            }
+            case "J" -> {
+                declares.add("declare i64 @aot_indy_long(i64, i64)");
+                body.append("  call i64 @aot_indy_long(i64 ").append(sbv).append(", i64 ").append(value).append(")\n");
+            }
+            case "F" -> {
+                declares.add("declare i64 @aot_indy_float(i64, i32)");
+                body.append("  call i64 @aot_indy_float(i64 ").append(sbv).append(", i32 ").append(value).append(")\n");
+            }
+            case "D" -> {
+                declares.add("declare i64 @aot_indy_double(i64, i64)");
+                body.append("  call i64 @aot_indy_double(i64 ").append(sbv).append(", i64 ").append(value).append(")\n");
+            }
+            default -> {
+                declares.add("declare i64 @aot_indy_obj(i64, i64)");
+                body.append("  call i64 @aot_indy_obj(i64 ").append(sbv).append(", i64 ").append(value).append(")\n");
+            }
+        }
     }
 
     private boolean invokeThread(MethodInsnNode m) {

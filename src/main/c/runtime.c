@@ -411,6 +411,8 @@ typedef struct {
 int32_t aot_string_type_id;
 void *aot_string_vtable;
 int64_t aot_object_type_id;
+int32_t aot_integer_type_id;
+int32_t aot_long_type_id;
 
 void aot_set_string_type(int32_t type_id)
 {
@@ -462,6 +464,58 @@ int32_t aot_str_length(int64_t s)
         return 0;
     }
     return ((aot_string *)(intptr_t)s)->length;
+}
+
+int64_t aot_str_from_utf8(int64_t ptr, int32_t len)
+{
+    if (ptr == 0 || len < 0) {
+        return str_alloc(0);
+    }
+    const unsigned char *src = (const unsigned char *)(intptr_t)ptr;
+    int64_t obj = str_alloc(len);
+    if (obj == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)obj;
+    uint16_t *dst = (uint16_t *)(intptr_t)s->chars;
+    int32_t out = 0;
+    int32_t i = 0;
+    while (i < len) {
+        unsigned char c = src[i];
+        uint32_t cp;
+        if (c < 0x80) {
+            cp = c;
+            i += 1;
+        } else if ((c & 0xE0) == 0xC0 && i + 1 < len) {
+            cp = (uint32_t)(c & 0x1F) << 6 | (uint32_t)(src[i + 1] & 0x3F);
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < len) {
+            cp = (uint32_t)(c & 0x0F) << 12 | (uint32_t)(src[i + 1] & 0x3F) << 6 | (uint32_t)(src[i + 2] & 0x3F);
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < len) {
+            cp = (uint32_t)(c & 0x07) << 18 | (uint32_t)(src[i + 1] & 0x3F) << 12
+                | (uint32_t)(src[i + 2] & 0x3F) << 6 | (uint32_t)(src[i + 3] & 0x3F);
+            i += 4;
+        } else {
+            cp = 0xFFFD;
+            i += 1;
+        }
+        if (cp <= 0xFFFF) {
+            if (out < len) {
+                dst[out++] = (uint16_t)cp;
+            }
+        } else {
+            cp -= 0x10000;
+            if (out < len) {
+                dst[out++] = (uint16_t)(0xD800 + (cp >> 10));
+            }
+            if (out < len) {
+                dst[out++] = (uint16_t)(0xDC00 + (cp & 0x3FF));
+            }
+        }
+    }
+    s->length = out;
+    return obj;
 }
 
 int32_t aot_str_char_at(int64_t s, int32_t idx)
@@ -943,6 +997,86 @@ int64_t aot_str_of_char(int32_t c)
     return obj;
 }
 
+int32_t aot_box_int(int64_t box);
+int64_t aot_long_box_get(int64_t box);
+int64_t aot_str_from_utf8(int64_t ptr, int32_t len);
+int64_t aot_tostring_of(int32_t tid, int64_t self) __attribute__((weak));
+
+int64_t aot_indy_begin(void)
+{
+    return aot_sb_new();
+}
+
+int64_t aot_indy_str(int64_t sb, int64_t s)
+{
+    return aot_sb_append_str(sb, s);
+}
+
+int64_t aot_indy_int(int64_t sb, int32_t v)
+{
+    return aot_sb_append_int(sb, v);
+}
+
+int64_t aot_indy_long(int64_t sb, int64_t v)
+{
+    return aot_sb_append_long(sb, v);
+}
+
+int64_t aot_indy_double(int64_t sb, int64_t raw)
+{
+    double d;
+    memcpy(&d, &raw, sizeof(double));
+    return aot_sb_append_double(sb, d);
+}
+
+int64_t aot_indy_float(int64_t sb, int32_t raw)
+{
+    float f;
+    memcpy(&f, &raw, sizeof(float));
+    return aot_sb_append_float(sb, f);
+}
+
+int64_t aot_indy_char(int64_t sb, int32_t c)
+{
+    return aot_sb_append_char(sb, c);
+}
+
+int64_t aot_indy_bool(int64_t sb, int32_t v)
+{
+    return aot_sb_append_bool(sb, v);
+}
+
+int64_t aot_indy_obj(int64_t sb, int64_t o)
+{
+    if (o == 0) {
+        return aot_sb_append_str(sb, 0);
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)o + 8);
+    if (tid == aot_string_type_id) {
+        return aot_sb_append_str(sb, o);
+    }
+    if (tid == aot_integer_type_id) {
+        return aot_sb_append_int(sb, aot_box_int(o));
+    }
+    if (tid == aot_long_type_id) {
+        return aot_sb_append_long(sb, aot_long_box_get(o));
+    }
+    int64_t s = aot_tostring_of ? aot_tostring_of(tid, o) : 0;
+    if (s != 0) {
+        return aot_sb_append_str(sb, s);
+    }
+    char buf[48];
+    int n = snprintf(buf, sizeof(buf), "obj@%llx", (unsigned long long)(uintptr_t)o);
+    int64_t tmp = aot_str_from_utf8((int64_t)(intptr_t)buf, n);
+    return aot_sb_append_str(sb, tmp);
+}
+
+int64_t aot_indy_end(int64_t sb)
+{
+    int64_t r = aot_sb_to_string(sb);
+    return r ? r : aot_str_from_utf8((int64_t)(intptr_t)"", 0);
+}
+
 int64_t aot_str_of_bool(int32_t v)
 {
     const char *txt = v ? "true" : "false";
@@ -1235,9 +1369,6 @@ int32_t aot_str_last_index_of(int64_t s, int32_t ch)
     }
     return -1;
 }
-
-int32_t aot_integer_type_id;
-int32_t aot_long_type_id;
 
 void aot_set_integer_type(int32_t type_id)
 {
