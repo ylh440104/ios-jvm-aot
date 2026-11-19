@@ -88,8 +88,8 @@ public final class MethodTranslator {
             String ak = argKinds.get(i);
             sig.append("F".equals(ak) ? "i32" : TypeInfo.llvm(ak)).append(" %a").append(i);
         }
-        String retLlvm = TypeInfo.llvm(TypeInfo.returnKind(mn.desc));
-        String retType = "V".equals(TypeInfo.returnKind(mn.desc)) ? "i32" : retLlvm;
+        String retType = "I".equals(TypeInfo.returnKind(mn.desc)) || "F".equals(TypeInfo.returnKind(mn.desc)) ? "i32"
+            : "V".equals(TypeInfo.returnKind(mn.desc)) ? "i32" : "i64";
         body.append("define ").append(retType).append(" @")
             .append(ClassParser.mangle(owner.name(), mn.name, mn.desc))
             .append("(").append(sig).append(") {\n");
@@ -1462,6 +1462,9 @@ body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).ap
         if (invokeStringBuilder(m)) {
             return;
         }
+        if (invokeBufferVirtual(m)) {
+            return;
+        }
         if (invokeCollection(m)) {
             return;
         }
@@ -1987,6 +1990,353 @@ String objv = popRef();
         return false;
     }
 
+    private static String bufTidGetter(String owner) {
+        String base = owner;
+        if (base.startsWith("bufs/")) {
+            base = "java/nio/" + base.substring(5);
+        }
+        return switch (base) {
+            case "java/nio/ByteBuffer" -> "byte";
+            case "java/nio/ShortBuffer" -> "short";
+            case "java/nio/CharBuffer" -> "char";
+            case "java/nio/IntBuffer" -> "int";
+            case "java/nio/LongBuffer" -> "long";
+            case "java/nio/FloatBuffer" -> "float";
+            case "java/nio/DoubleBuffer" -> "double";
+            case "org/lwjgl/system/PointerBuffer" -> "ptr";
+            default -> null;
+        };
+    }
+
+    private static String canonicalBuf(String owner) {
+        if (owner.startsWith("bufs/")) {
+            return "java/nio/" + owner.substring(5);
+        }
+        return owner;
+    }
+
+    private boolean invokeBufferVirtual(MethodInsnNode m) {
+        String kind = bufTidGetter(m.owner);
+        if (kind == null) {
+            return false;
+        }
+        String key = m.name + m.desc;
+        boolean isFlip = "flip".equals(m.name);
+        boolean isRewind = "rewind".equals(m.name);
+        boolean isClear = "clear".equals(m.name);
+        if (isFlip) {
+            String self = popRef();
+            declares.add("declare i64 @aot_buf_flip(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_flip(i64 ").append(self).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if (isRewind) {
+            String self = popRef();
+            declares.add("declare i64 @aot_buf_rewind(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_rewind(i64 ").append(self).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if (isClear) {
+            String self = popRef();
+            declares.add("declare i64 @aot_buf_clear(i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_clear(i64 ").append(self).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        switch (key) {
+            case "capacity()I" -> {
+                String self = popRef();
+                declares.add("declare i32 @aot_buf_capacity(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_buf_capacity(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "position()I" -> {
+                String self = popRef();
+                declares.add("declare i32 @aot_buf_position(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_buf_position(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "limit()I" -> {
+                String self = popRef();
+                declares.add("declare i32 @aot_buf_limit(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_buf_limit(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "remaining()I" -> {
+                String self = popRef();
+                declares.add("declare i32 @aot_buf_remaining(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_buf_remaining(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "hasRemaining()Z" -> {
+                String self = popRef();
+                declares.add("declare i32 @aot_buf_has_remaining(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_buf_has_remaining(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "position(I)Lbufs/ByteBuffer;", "position(I)Ljava/nio/Buffer;" -> {
+                String p = popInt();
+                String self = popRef();
+                declares.add("declare i64 @aot_buf_set_position(i64, i32)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_buf_set_position(i64 ").append(self)
+                    .append(", i32 ").append(p).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "limit(I)Lbufs/ByteBuffer;", "limit(I)Ljava/nio/Buffer;" -> {
+                String l = popInt();
+                String self = popRef();
+                declares.add("declare i64 @aot_buf_set_limit(i64, i32)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_buf_set_limit(i64 ").append(self)
+                    .append(", i32 ").append(l).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            default -> {
+                return invokeBufferTyped(m, kind, key);
+            }
+        }
+    }
+
+    private boolean invokeBufferTyped(MethodInsnNode m, String kind, String key) {
+        String[] parts = splitAccessor(m.name, m.desc);
+        if (parts == null) {
+            return false;
+        }
+        boolean isPut = "put".equals(parts[0]);
+        boolean hasIndex = "1".equals(parts[1]);
+        String kindCode = parts[2];
+        int width = switch (kindCode) {
+            case "B" -> 1;
+            case "S", "C" -> 2;
+            case "I", "F" -> 4;
+            default -> 8;
+        };
+        declares.add("declare i64 @aot_buf_read(i64, i32, i32)");
+        declares.add("declare void @aot_buf_write(i64, i32, i32, i64)");
+        declares.add("declare i32 @aot_buf_position(i64)");
+        declares.add("declare i64 @aot_buf_set_position(i64, i32)");
+        if (isPut) {
+            String val = valueAsBits(kindCode);
+            String self;
+            String off;
+            if (hasIndex) {
+                String idx = popInt();
+                self = popRef();
+                String scaled = nv("v");
+                body.append("  ").append(scaled).append(" = mul i32 ").append(idx).append(", ").append(width).append("\n");
+                off = scaled;
+                body.append("  call void @aot_buf_write(i64 ").append(self).append(", i32 ").append(off)
+                    .append(", i32 ").append(width).append(", i64 ").append(val).append(")\n");
+                pushRef(self);
+                return true;
+            }
+            self = popRef();
+            String pos = nv("v");
+            body.append("  ").append(pos).append(" = call i32 @aot_buf_position(i64 ").append(self).append(")\n");
+            String scaled = nv("v");
+            body.append("  ").append(scaled).append(" = mul i32 ").append(pos).append(", ").append(width).append("\n");
+            body.append("  call void @aot_buf_write(i64 ").append(self).append(", i32 ").append(scaled)
+                .append(", i32 ").append(width).append(", i64 ").append(val).append(")\n");
+            String np = nv("v");
+            body.append("  ").append(np).append(" = add i32 ").append(pos).append(", 1\n");
+            body.append("  call i64 @aot_buf_set_position(i64 ").append(self).append(", i32 ").append(np).append(")\n");
+            pushRef(self);
+            return true;
+        }
+        String self;
+        String off;
+        if (hasIndex) {
+            String idx = popInt();
+            self = popRef();
+            String scaled = nv("v");
+            body.append("  ").append(scaled).append(" = mul i32 ").append(idx).append(", ").append(width).append("\n");
+            off = scaled;
+        } else {
+            self = popRef();
+            String pos = nv("v");
+            body.append("  ").append(pos).append(" = call i32 @aot_buf_position(i64 ").append(self).append(")\n");
+            String scaled = nv("v");
+            body.append("  ").append(scaled).append(" = mul i32 ").append(pos).append(", ").append(width).append("\n");
+            off = scaled;
+            String np = nv("v");
+            body.append("  ").append(np).append(" = add i32 ").append(pos).append(", 1\n");
+            body.append("  call i64 @aot_buf_set_position(i64 ").append(self).append(", i32 ").append(np).append(")\n");
+        }
+        String raw = nv("v");
+        body.append("  ").append(raw).append(" = call i64 @aot_buf_read(i64 ").append(self)
+            .append(", i32 ").append(off).append(", i32 ").append(width).append(")\n");
+        pushFromBits(kindCode, raw);
+        return true;
+    }
+
+    private String valueAsBits(String kindCode) {
+        switch (kindCode) {
+            case "F" -> {
+                String v = popFloat();
+                String b = nv("v");
+                body.append("  ").append(b).append(" = bitcast float ").append(v).append(" to i32\n");
+                String e = nv("v");
+                body.append("  ").append(e).append(" = sext i32 ").append(b).append(" to i64\n");
+                return e;
+            }
+            case "D" -> {
+                String v = popDouble();
+                String b = nv("v");
+                body.append("  ").append(b).append(" = bitcast double ").append(v).append(" to i64\n");
+                return b;
+            }
+            case "I", "S", "C", "B" -> {
+                String v = popInt();
+                String e = nv("v");
+                body.append("  ").append(e).append(" = sext i32 ").append(v).append(" to i64\n");
+                return e;
+            }
+            default -> {
+                return popLong();
+            }
+        }
+    }
+
+    private void pushFromBits(String kindCode, String raw) {
+        switch (kindCode) {
+            case "F" -> {
+                String t = nv("v");
+                body.append("  ").append(t).append(" = trunc i64 ").append(raw).append(" to i32\n");
+                String g = nv("v");
+                body.append("  ").append(g).append(" = bitcast i32 ").append(t).append(" to float\n");
+                pushFloat(g);
+            }
+            case "D" -> {
+                String d = nv("v");
+                body.append("  ").append(d).append(" = bitcast i64 ").append(raw).append(" to double\n");
+                pushDouble(d);
+            }
+            case "I", "S", "C", "B" -> {
+                String t = nv("v");
+                body.append("  ").append(t).append(" = trunc i64 ").append(raw).append(" to i32\n");
+                pushInt(t);
+            }
+            default -> pushLong(raw);
+        }
+    }
+
+    private static String[] splitAccessor(String name, String desc) {
+        String rc;
+        if ("get".equals(name) || "put".equals(name)) {
+            String ret = org.objectweb.asm.Type.getReturnType(desc).getDescriptor();
+            String arg = org.objectweb.asm.Type.getArgumentTypes(desc).length > 0
+                ? org.objectweb.asm.Type.getArgumentTypes(desc)[org.objectweb.asm.Type.getArgumentTypes(desc).length - 1].getDescriptor()
+                : "V";
+            String probe = "get".equals(name) ? ret : arg;
+            rc = switch (probe) {
+                case "B" -> "B";
+                case "S" -> "S";
+                case "C" -> "C";
+                case "I" -> "I";
+                case "J" -> "J";
+                case "F" -> "F";
+                case "D" -> "D";
+                default -> null;
+            };
+            if (rc == null) {
+                return null;
+            }
+            boolean hasIdx = org.objectweb.asm.Type.getArgumentTypes(desc).length > ("get".equals(name) ? 0 : 1);
+            return new String[] { "get".equals(name) ? "get" : "put", hasIdx ? "1" : "0", rc };
+        }
+        rc = switch (name) {
+            case "getInt", "putInt" -> "I";
+            case "getFloat", "putFloat" -> "F";
+            case "getDouble", "putDouble" -> "D";
+            case "getLong", "putLong" -> "J";
+            case "getShort", "putShort" -> "S";
+            case "getChar", "putChar" -> "C";
+            case "getByte", "putByte" -> "B";
+            default -> null;
+        };
+        if (rc == null) {
+            return null;
+        }
+        boolean put = name.startsWith("put");
+        boolean hasIndex;
+        if (put) {
+            hasIndex = org.objectweb.asm.Type.getArgumentTypes(desc).length > 1;
+        } else {
+            hasIndex = org.objectweb.asm.Type.getArgumentTypes(desc).length > 0;
+        }
+        return new String[] { put ? "put" : "get", hasIndex ? "1" : "0", rc };
+    }
+
+    private static int bufKindCode(String kind) {
+        return switch (kind) {
+            case "byte" -> 0;
+            case "short" -> 1;
+            case "char" -> 2;
+            case "int" -> 3;
+            case "long" -> 4;
+            case "float" -> 5;
+            case "double" -> 6;
+            default -> 7;
+        };
+    }
+
+    private boolean invokeBufferStatic(MethodInsnNode m) {
+        String kind = bufTidGetter(m.owner);
+        if (kind == null) {
+            return false;
+        }
+        String key = m.name + m.desc;
+        declares.add("declare i64 @aot_buf_alloc(i32, i32)");
+        declares.add("declare i64 @aot_buf_wrap(i32, i64, i32)");
+        declares.add("declare i64 @aot_buf_addr(i64)");
+        String tid = String.valueOf(bufKindCode(kind));
+        if ("allocateDirect(I)".equals(m.name + m.desc.substring(0, m.desc.indexOf(')') + 1))
+            || "allocate(I)".equals(m.name + m.desc.substring(0, m.desc.indexOf(')') + 1))) {
+            String cap = popInt();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_alloc(i32 ").append(tid)
+                .append(", i32 ").append(cap).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("create".equals(m.name) && m.desc.startsWith("(JI)")) {
+            String cap = popInt();
+            String addr = popLong();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_wrap(i32 ").append(tid)
+                .append(", i64 ").append(addr).append(", i32 ").append(cap).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("create".equals(m.name) && m.desc.startsWith("(I)")) {
+            String cap = popInt();
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_buf_alloc(i32 ").append(tid)
+                .append(", i32 ").append(cap).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        return false;
+    }
+
     private boolean invokeCollection(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
@@ -2242,6 +2592,9 @@ String objv = popRef();
         String owner = m.owner;
         String key = m.name + m.desc;
         if (invokeFfi(owner, m)) {
+            return true;
+        }
+        if (invokeBufferStatic(m)) {
             return true;
         }
         if (invokeStaticThread(m)) {
@@ -3078,7 +3431,11 @@ String objv = popRef();
 
     private String retLlvm(String desc) {
         String k = TypeInfo.returnKind(desc);
-        return "V".equals(k) ? "i32" : TypeInfo.llvm(k);
+        return switch (k) {
+            case "V" -> "i32";
+            case "I", "F" -> "i32";
+            default -> "i64";
+        };
     }
 
     private void pushReturnValue(String desc, String reg) {

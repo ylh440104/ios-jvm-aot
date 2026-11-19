@@ -216,6 +216,7 @@ public final class Main {
         declares.add("declare i64 @aot_unbox_double(i64)");
         declares.add("declare i64 @aot_box_float(i32)");
         declares.add("declare i32 @aot_unbox_float(i64)");
+        declares.add("declare void @aot_set_buf_types(i32, i32, i32, i32, i32, i32, i32, i32)");
         declares.add("declare i64 @aot_str_split(i64, i64)");
         declares.add("declare i64 @aot_str_to_char_array(i64)");
         declares.add("declare i64 @aot_str_repeat(i64, i32)");
@@ -233,6 +234,14 @@ public final class Main {
         int boolBoxTid = layout.typeId("java/lang/Boolean");
         int doubleBoxTid = layout.typeId("java/lang/Double");
         int floatBoxTid = layout.typeId("java/lang/Float");
+        int bufByteTid = layout.typeId("java/nio/ByteBuffer");
+        int bufShortTid = layout.typeId("java/nio/ShortBuffer");
+        int bufCharTid = layout.typeId("java/nio/CharBuffer");
+        int bufIntTid = layout.typeId("java/nio/IntBuffer");
+        int bufLongTid = layout.typeId("java/nio/LongBuffer");
+        int bufFloatTid = layout.typeId("java/nio/FloatBuffer");
+        int bufDoubleTid = layout.typeId("java/nio/DoubleBuffer");
+        int bufPtrTid = layout.typeId("org/lwjgl/system/PointerBuffer");
         String assignDecl = layout.renderAssignTable();
         String assignInit = layout.renderAssignInit();
         String superDecl = layout.renderSuperTable();
@@ -262,6 +271,10 @@ public final class Main {
         ir.append("  call void @aot_set_bool_box_type(i32 ").append(boolBoxTid).append(")\n");
         ir.append("  call void @aot_set_double_box_type(i32 ").append(doubleBoxTid).append(")\n");
         ir.append("  call void @aot_set_float_box_type(i32 ").append(floatBoxTid).append(")\n");
+        ir.append("  call void @aot_set_buf_types(i32 ").append(bufByteTid).append(", i32 ").append(bufShortTid)
+            .append(", i32 ").append(bufCharTid).append(", i32 ").append(bufIntTid)
+            .append(", i32 ").append(bufLongTid).append(", i32 ").append(bufFloatTid)
+            .append(", i32 ").append(bufDoubleTid).append(", i32 ").append(bufPtrTid).append(")\n");
         ir.append("  call void @aot_set_integer_type(i32 ").append(layout.typeId("java/lang/Integer")).append(")\n");
         ir.append("  call void @aot_set_long_type(i32 ").append(layout.typeId("java/lang/Long")).append(")\n");
         ir.append(pool.renderStringInit());

@@ -45,7 +45,10 @@ final class MethodSupport {
             SlotInfo s = list.get(i);
             List<String> kinds = TypeInfo.argKinds(s.desc);
             String retKind = TypeInfo.returnKind(s.desc);
-            String retLlvm = "V".equals(retKind) ? "i32" : TypeInfo.llvm(retKind);
+            String retLlvm = switch (retKind) {
+                case "V", "I", "F" -> "i32";
+                default -> "i64";
+            };
             sb.append("define i64 @aot_mslot_").append(i).append("(i64 %self, i64 %args) {\n");
             sb.append("entry:\n");
             sb.append("  %ap = inttoptr i64 %args to ptr\n");

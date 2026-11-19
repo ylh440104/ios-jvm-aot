@@ -3946,3 +3946,343 @@ int32_t aot_unbox_float(int64_t o)
     }
     return *(int32_t *)((char *)(intptr_t)o + 16);
 }
+
+static int32_t aot_buf_byte_tid;
+static int32_t aot_buf_short_tid;
+static int32_t aot_buf_char_tid;
+static int32_t aot_buf_int_tid;
+static int32_t aot_buf_long_tid;
+static int32_t aot_buf_float_tid;
+static int32_t aot_buf_double_tid;
+static int32_t aot_buf_ptr_tid;
+
+void aot_set_buf_types(int32_t b, int32_t s, int32_t c, int32_t i, int32_t l, int32_t f, int32_t d, int32_t p)
+{
+    aot_buf_byte_tid = b;
+    aot_buf_short_tid = s;
+    aot_buf_char_tid = c;
+    aot_buf_int_tid = i;
+    aot_buf_long_tid = l;
+    aot_buf_float_tid = f;
+    aot_buf_double_tid = d;
+    aot_buf_ptr_tid = p;
+}
+
+static int32_t buf_elem_size(int32_t tid)
+{
+    switch (tid) {
+        case 0: return 1;
+        case 1: case 2: return 2;
+        case 3: case 5: return 4;
+        default: return 8;
+    }
+}
+
+static int64_t buf_new(int32_t tid, int64_t addr, int32_t cap, int32_t elem)
+{
+    void *obj = gc_alloc(40);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = tid;
+    *(int32_t *)((char *)obj + 12) = elem;
+    *(int64_t *)((char *)obj + 16) = addr;
+    *(int32_t *)((char *)obj + 24) = cap;
+    *(int32_t *)((char *)obj + 28) = 0;
+    *(int32_t *)((char *)obj + 32) = cap;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_buf_alloc(int32_t tid, int32_t cap)
+{
+    if (cap < 0) {
+        return 0;
+    }
+    int32_t es = buf_elem_size(tid);
+    int64_t bytes = (int64_t)cap * es;
+    if (bytes <= 0) {
+        bytes = 1;
+    }
+    char *mem = (char *)calloc((size_t)bytes, 1);
+    if (!mem) {
+        return 0;
+    }
+    return buf_new(tid, (int64_t)(intptr_t)mem, cap, es);
+}
+
+int64_t aot_buf_wrap(int32_t tid, int64_t addr, int32_t cap)
+{
+    return buf_new(tid, addr, cap, buf_elem_size(tid));
+}
+
+int64_t aot_buf_addr(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)b + 16);
+}
+
+int32_t aot_buf_capacity(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)b + 24);
+}
+
+int32_t aot_buf_position(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)b + 28);
+}
+
+int32_t aot_buf_limit(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)b + 32);
+}
+
+int64_t aot_buf_set_position(int64_t b, int32_t p)
+{
+    if (b == 0) {
+        return b;
+    }
+    int32_t cap = *(int32_t *)((char *)(intptr_t)b + 24);
+    if (p < 0 || p > cap) {
+        return b;
+    }
+    *(int32_t *)((char *)(intptr_t)b + 28) = p;
+    return b;
+}
+
+int64_t aot_buf_set_limit(int64_t b, int32_t l)
+{
+    if (b == 0) {
+        return b;
+    }
+    int32_t cap = *(int32_t *)((char *)(intptr_t)b + 24);
+    if (l < 0 || l > cap) {
+        return b;
+    }
+    *(int32_t *)((char *)(intptr_t)b + 32) = l;
+    return b;
+}
+
+int32_t aot_buf_remaining(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    int32_t lim = *(int32_t *)((char *)(intptr_t)b + 32);
+    int32_t pos = *(int32_t *)((char *)(intptr_t)b + 28);
+    return lim - pos;
+}
+
+int32_t aot_buf_has_remaining(int64_t b)
+{
+    return aot_buf_remaining(b) > 0;
+}
+
+int64_t aot_buf_flip(int64_t b)
+{
+    if (b == 0) {
+        return b;
+    }
+    int32_t pos = *(int32_t *)((char *)(intptr_t)b + 28);
+    *(int32_t *)((char *)(intptr_t)b + 32) = pos;
+    *(int32_t *)((char *)(intptr_t)b + 28) = 0;
+    return b;
+}
+
+int64_t aot_buf_rewind(int64_t b)
+{
+    if (b == 0) {
+        return b;
+    }
+    *(int32_t *)((char *)(intptr_t)b + 28) = 0;
+    return b;
+}
+
+int64_t aot_buf_clear(int64_t b)
+{
+    if (b == 0) {
+        return b;
+    }
+    int32_t cap = *(int32_t *)((char *)(intptr_t)b + 24);
+    *(int32_t *)((char *)(intptr_t)b + 28) = 0;
+    *(int32_t *)((char *)(intptr_t)b + 32) = cap;
+    return b;
+}
+
+static char *buf_at(int64_t b, int32_t idx)
+{
+    int64_t addr = *(int64_t *)((char *)(intptr_t)b + 16);
+    int32_t es = *(int32_t *)((char *)(intptr_t)b + 12);
+    return (char *)(intptr_t)addr + (int64_t)idx * es;
+}
+
+int64_t aot_buf_get(int64_t b, int32_t idx)
+{
+    if (b == 0 || idx < 0) {
+        return 0;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)b + 8);
+    char *p = buf_at(b, idx);
+    switch (tid) {
+        case 0: return (int64_t)(*(int8_t *)p);
+        case 1: return (int64_t)(*(int16_t *)p);
+        case 2: return (int64_t)(*(uint16_t *)p);
+        case 3: return (int64_t)(*(int32_t *)p);
+        case 5: {
+            float f = *(float *)p;
+            int32_t bits = 0;
+            memcpy(&bits, &f, sizeof(float));
+            return (int64_t)bits;
+        }
+        case 6: {
+            double d = *(double *)p;
+            int64_t bits = 0;
+            memcpy(&bits, &d, sizeof(double));
+            return bits;
+        }
+        default: return *(int64_t *)p;
+    }
+}
+
+int64_t aot_buf_get_advance(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    int32_t pos = *(int32_t *)((char *)(intptr_t)b + 28);
+    int32_t lim = *(int32_t *)((char *)(intptr_t)b + 32);
+    if (pos >= lim) {
+        return 0;
+    }
+    *(int32_t *)((char *)(intptr_t)b + 28) = pos + 1;
+    return aot_buf_get(b, pos);
+}
+
+void aot_buf_put(int64_t b, int32_t idx, int64_t v)
+{
+    if (b == 0 || idx < 0) {
+        return;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)b + 8);
+    char *p = buf_at(b, idx);
+    switch (tid) {
+        case 0: *(int8_t *)p = (int8_t)v; return;
+        case 1: *(int16_t *)p = (int16_t)v; return;
+        case 2: *(uint16_t *)p = (uint16_t)v; return;
+        case 3: *(int32_t *)p = (int32_t)v; return;
+        case 5: {
+            int32_t bits = (int32_t)v;
+            float f = 0;
+            memcpy(&f, &bits, sizeof(float));
+            *(float *)p = f;
+            return;
+        }
+        case 6: {
+            double d = 0;
+            memcpy(&d, &v, sizeof(double));
+            *(double *)p = d;
+            return;
+        }
+        default: *(int64_t *)p = v; return;
+    }
+}
+
+int64_t aot_buf_put_advance(int64_t b, int64_t v)
+{
+    if (b == 0) {
+        return b;
+    }
+    int32_t pos = *(int32_t *)((char *)(intptr_t)b + 28);
+    int32_t lim = *(int32_t *)((char *)(intptr_t)b + 32);
+    if (pos >= lim) {
+        return b;
+    }
+    *(int32_t *)((char *)(intptr_t)b + 28) = pos + 1;
+    aot_buf_put(b, pos, v);
+    return b;
+}
+
+int64_t aot_buf_read(int64_t b, int32_t off, int32_t width)
+{
+    if (b == 0 || off < 0) {
+        return 0;
+    }
+    int64_t addr = *(int64_t *)((char *)(intptr_t)b + 16);
+    int32_t cap = *(int32_t *)((char *)(intptr_t)b + 24);
+    if (addr == 0 || off + width > cap) {
+        return 0;
+    }
+    char *p = (char *)(intptr_t)addr + off;
+    switch (width) {
+        case 1: return (int64_t)(*(int8_t *)p);
+        case 2: return (int64_t)(*(int16_t *)p);
+        case 4: {
+            if ((*(int32_t *)((char *)(intptr_t)b + 8)) == 5) {
+                float f = *(float *)p;
+                int32_t bits = 0;
+                memcpy(&bits, &f, sizeof(float));
+                return (int64_t)bits;
+            }
+            return (int64_t)(*(int32_t *)p);
+        }
+        default: {
+            if ((*(int32_t *)((char *)(intptr_t)b + 8)) == 6) {
+                double d = *(double *)p;
+                int64_t bits = 0;
+                memcpy(&bits, &d, sizeof(double));
+                return bits;
+            }
+            return *(int64_t *)p;
+        }
+    }
+}
+
+void aot_buf_write(int64_t b, int32_t off, int32_t width, int64_t v)
+{
+    if (b == 0 || off < 0) {
+        return;
+    }
+    int64_t addr = *(int64_t *)((char *)(intptr_t)b + 16);
+    int32_t cap = *(int32_t *)((char *)(intptr_t)b + 24);
+    if (addr == 0 || off + width > cap) {
+        return;
+    }
+    char *p = (char *)(intptr_t)addr + off;
+    int32_t tid = *(int32_t *)((char *)(intptr_t)b + 8);
+    switch (width) {
+        case 1: *(int8_t *)p = (int8_t)v; return;
+        case 2: *(int16_t *)p = (int16_t)v; return;
+        case 4: {
+            if (tid == 5) {
+                int32_t bits = (int32_t)v;
+                float f = 0;
+                memcpy(&f, &bits, sizeof(float));
+                *(float *)p = f;
+                return;
+            }
+            *(int32_t *)p = (int32_t)v;
+            return;
+        }
+        default: {
+            if (tid == 6) {
+                double d = 0;
+                memcpy(&d, &v, sizeof(double));
+                *(double *)p = d;
+                return;
+            }
+            *(int64_t *)p = v;
+            return;
+        }
+    }
+}

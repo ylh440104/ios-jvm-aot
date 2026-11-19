@@ -70,6 +70,7 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Mem1 -o build/fn-Mem1.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Ffi2 -o build/fn-Ffi2.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Ffi3 -o build/fn-Ffi3.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Buf1 -o build/fn-Buf1.ll
 
       - name: Verify IR is well formed
         run: |
@@ -124,7 +125,7 @@ jobs:
       - name: Verify native interop
         run: |
           set -e
-          for t in Mem1 Ffi2 Ffi3; do
+          for t in Mem1 Ffi2 Ffi3 Buf1; do
             clang -O0 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o0" -lpthread -ldl -lffi
             "./build/fn-$t-o0" > "build/fn-$t-out.txt"
             clang -O1 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o1" -lpthread -ldl -lffi
@@ -137,6 +138,8 @@ jobs:
           diff build/fn-ffi-expect.txt build/fn-Ffi2-out.txt && echo FFI_OK
           printf '1\n1\n1\n1\n0\n4.000\n1024.000\n2.000\n3.000\n-56\n4464\ndone\n' > build/fn-f3-expect.txt
           diff build/fn-f3-expect.txt build/fn-Ffi3-out.txt && echo MATH_OK
+          printf '1\n32\n0\n32\n32\n12345\n-7\n0\n1\n2\n65\n66\n2\n0\n2\n2\n0\n4\n2\n0\ndone\n' > build/fn-b1-expect.txt
+          diff build/fn-b1-expect.txt build/fn-Buf1-out.txt && echo BUFFER_OK
 
   ios:
     if: github.event_name == 'workflow_dispatch'
