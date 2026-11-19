@@ -45,7 +45,7 @@ public final class Layout {
             return;
         }
         String sup = superName == null ? "java/lang/Object" : superName;
-        classes.put(name, new ClassInfo(name, sup, methods, new ArrayList<>()));
+        classes.put(name, new ClassInfo(name, sup, new ArrayList<>(), org.objectweb.asm.Opcodes.ACC_INTERFACE | org.objectweb.asm.Opcodes.ACC_ABSTRACT, methods, new ArrayList<>()));
         typeId(name);
         MethodNode ctor = new MethodNode();
         ctor.name = "<init>";
@@ -125,19 +125,106 @@ public final class Layout {
             return cached;
         }
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
-        String cur = cls;
-        while (cur != null) {
-            if (!out.add(cur)) {
-                break;
-            }
-            ClassInfo c = classes.get(cur);
-            if (c == null) {
-                break;
-            }
-            cur = c.superName();
-        }
+        collectAncestry(cls, out);
         ancestryCache.put(cls, out);
         return out;
+    }
+
+    private void collectAncestry(String cls, java.util.Set<String> out) {
+        if (cls == null || !out.add(cls)) {
+            return;
+        }
+        ClassInfo c = classes.get(cls);
+        if (c == null) {
+            return;
+        }
+        collectAncestry(c.superName(), out);
+        for (String itf : c.interfaces()) {
+            collectAncestry(itf, out);
+        }
+    }
+
+    public String renderAssignTable() {
+        int n = Math.max(maxTypeId(), 2);
+        StringBuilder out = new StringBuilder();
+        out.append("@.assign_tbl = global [").append((long)n * n).append(" x i8] zeroinitializer\n");
+        return out.toString();
+    }
+
+    public String renderAssignInit() {
+        int n = Math.max(maxTypeId(), 2);
+        StringBuilder out = new StringBuilder();
+        List<String[]> pairs = new ArrayList<>();
+        for (Map.Entry<String, Integer> sub : new java.util.LinkedHashMap<>(typeIds).entrySet()) {
+            java.util.Set<String> anc = ancestryOf(sub.getKey());
+            for (String sup : anc) {
+                Integer sid = typeIds.get(sup);
+                if (sid == null) {
+                    continue;
+                }
+                pairs.add(new String[] { String.valueOf(sub.getValue()), String.valueOf(sid) });
+            }
+        }
+        int i = 0;
+        for (String[] p : pairs) {
+            out.append("  %ag").append(i).append(" = getelementptr [").append((long)n * n)
+                .append(" x i8], ptr @.assign_tbl, i64 0, i64 ")
+                .append((long)Integer.parseInt(p[0]) * n + Integer.parseInt(p[1])).append("\n");
+            out.append("  store i8 1, ptr %ag").append(i).append("\n");
+            i++;
+        }
+        out.append("  call void @aot_set_assign_table(ptr @.assign_tbl, i32 ").append(n).append(")\n");
+        return out.toString();
+    }
+
+    public String renderSuperTable() {
+        StringBuilder out = new StringBuilder();
+        int slots = Math.max(maxTypeId(), 2);
+        out.append("@.super_of = global [").append(slots).append(" x i32] zeroinitializer\n");
+        return out.toString();
+    }
+
+    public String renderSuperInit() {
+        StringBuilder out = new StringBuilder();
+        for (Map.Entry<String, Integer> e : new java.util.LinkedHashMap<>(typeIds).entrySet()) {
+            String name = e.getKey();
+            int tid = e.getValue();
+            String sup = "0";
+            ClassInfo c = classes.get(name);
+            if (c != null && c.superName() != null && !c.isInterface()) {
+                Integer sid = typeIds.get(c.superName());
+                if (sid != null) {
+                    sup = String.valueOf(sid);
+                }
+            }
+            out.append("  %sp").append(tid).append(" = getelementptr [").append(Math.max(maxTypeId(), 2))
+                .append(" x i32], ptr @.super_of, i64 0, i32 ").append(tid).append("\n");
+            out.append("  store i32 ").append(sup).append(", ptr %sp").append(tid).append("\n");
+        }
+        out.append("  call void @aot_set_super_table(ptr @.super_of, i32 ").append(Math.max(maxTypeId(), 2)).append(")\n");
+        return out.toString();
+    }
+
+    public String renderIfaceTable() {
+        StringBuilder out = new StringBuilder();
+        int slots = Math.max(maxTypeId(), 2);
+        out.append("@.iface_of = global [").append(slots).append(" x i32] zeroinitializer\n");
+        return out.toString();
+    }
+
+    public String renderIfaceInit() {
+        StringBuilder out = new StringBuilder();
+        int slots = Math.max(maxTypeId(), 2);
+        for (Map.Entry<String, Integer> e : new java.util.LinkedHashMap<>(typeIds).entrySet()) {
+            ClassInfo c = classes.get(e.getKey());
+            int val = c != null && c.isInterface() ? 1 : 0;
+            int tid = e.getValue();
+            out.append("  %ifp").append(tid).append(" = getelementptr [").append(slots)
+                .append(" x i32], ptr @.iface_of, i64 0, i32 ").append(tid).append("\n");
+            out.append("  store i32 ").append(val).append(", ptr %ifp").append(tid).append("\n");
+        }
+        out.append("  call void @aot_set_iface_table(ptr @.iface_of, i32 ").append(slots).append(")\n");
+        return out.toString();
     }
 
     public int typeTableSlots() {
@@ -214,7 +301,7 @@ public final class Layout {
         if (classes.containsKey(name)) {
             return;
         }
-        classes.put(name, new ClassInfo(name, superName, new ArrayList<>(), new ArrayList<>()));
+        classes.put(name, new ClassInfo(name, superName, new ArrayList<>(), 0, new ArrayList<>(), new ArrayList<>()));
     }
 
     public String arrayTypeId(String desc) {

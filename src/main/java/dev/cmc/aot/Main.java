@@ -203,6 +203,12 @@ public final class Main {
         declares.add("declare void @aot_set_bool_box_type(i32)");
         declares.add("declare i64 @aot_box_char(i32)");
         declares.add("declare i64 @aot_box_bool(i32)");
+        declares.add("declare void @aot_set_assign_table(ptr, i32)");
+        declares.add("declare void @aot_set_super_table(ptr, i32)");
+        declares.add("declare void @aot_set_iface_table(ptr, i32)");
+        declares.add("declare i64 @aot_class_get_superclass(i32)");
+        declares.add("declare i32 @aot_class_is_assignable_from(i32, i32)");
+        declares.add("declare i32 @aot_class_is_interface(i32)");
         declares.add("declare i64 @aot_str_split(i64, i64)");
         declares.add("declare i64 @aot_str_to_char_array(i64)");
         declares.add("declare i64 @aot_str_repeat(i64, i32)");
@@ -218,12 +224,21 @@ public final class Main {
         int stringArrayTid = layout.typeId("[Ljava/lang/String;");
         int charBoxTid = layout.typeId("java/lang/Character");
         int boolBoxTid = layout.typeId("java/lang/Boolean");
+        String assignDecl = layout.renderAssignTable();
+        String assignInit = layout.renderAssignInit();
+        String superDecl = layout.renderSuperTable();
+        String superInit = layout.renderSuperInit();
+        String ifaceDecl = layout.renderIfaceTable();
+        String ifaceInit = layout.renderIfaceInit();
         ir.append(layout.renderTypeTables());
         ir.append(layout.renderClassNameTable());
         ir.append(ReflectSupport.renderMeta(layout));
         ir.append(methodMetaDecl);
         ir.append(ctorMetaDecl);
         ir.append(typeDescDecl);
+        ir.append(assignDecl);
+        ir.append(superDecl);
+        ir.append(ifaceDecl);
         ir.append(extraFuncs);
         ir.append(methodTrampolines);
         ir.append(ctorWrappers);
@@ -250,6 +265,9 @@ public final class Main {
         ir.append(methodMetaInit);
         ir.append(ctorMetaInit);
         ir.append(typeDescInit);
+        ir.append(assignInit);
+        ir.append(superInit);
+        ir.append(ifaceInit);
         ir.append("  call void @aot_set_ctor_type(i32 ").append(layout.typeId("java/lang/reflect/Constructor")).append(")\n");
         ir.append("  call void @aot_set_reflect_array_types(i32 ").append(layout.typeId("[Ljava/lang/reflect/Field;")).append(", i32 ").append(layout.typeId("[Ljava/lang/reflect/Method;")).append(")\n");
         for (ClassInfo c : classes) {

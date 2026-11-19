@@ -28,7 +28,8 @@ public final class ClassParser {
             boolean isStatic = (fn.access & Opcodes.ACC_STATIC) != 0;
             fields.add(new FieldInfo(fn.name, fn.desc, isStatic));
         }
-        return new ClassInfo(node.name, node.superName, methods, fields);
+        List<String> itfs = new ArrayList<>(node.interfaces);
+        return new ClassInfo(node.name, node.superName, itfs, node.access, methods, fields);
     }
 
     public static boolean isStatic(MethodNode mn) {

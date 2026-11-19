@@ -152,7 +152,7 @@ public final class LambdaSynthesizer {
         si.add(returnFor(samRet));
         methods.add(sam);
 
-        ClassInfo ci2 = new ClassInfo(itf, "java/lang/Object", methods, capturedFields(captured));
+        ClassInfo ci2 = new ClassInfo(itf, "java/lang/Object", new java.util.ArrayList<>(), 0, methods, capturedFields(captured));
         classes.add(ci2);
         return itf;
     }

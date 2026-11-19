@@ -986,6 +986,78 @@ void aot_set_bool_box_type(int32_t type_id)
     aot_bool_box_type_id = type_id;
 }
 
+static int32_t *super_table;
+static int32_t super_table_size;
+static int32_t *iface_table;
+static int32_t iface_table_size;
+static int8_t *assign_table;
+static int32_t assign_table_size;
+
+void aot_set_assign_table(int8_t *data, int32_t size)
+{
+    assign_table = data;
+    assign_table_size = size;
+}
+
+int32_t aot_is_subtype(int32_t sub, int32_t sup)
+{
+    if (sub <= 0 || sup <= 0 || assign_table == 0) {
+        return 0;
+    }
+    if (sub >= assign_table_size || sup >= assign_table_size) {
+        return 0;
+    }
+    return assign_table[(int32_t)sub * assign_table_size + sup] != 0;
+}
+
+void aot_set_super_table(int32_t *data, int32_t size)
+{
+    super_table = data;
+    super_table_size = size;
+}
+
+void aot_set_iface_table(int32_t *data, int32_t size)
+{
+    iface_table = data;
+    iface_table_size = size;
+}
+
+int32_t aot_class_super_tid(int32_t tid)
+{
+    if (tid <= 0 || tid >= super_table_size || super_table == 0) {
+        return 0;
+    }
+    return super_table[tid];
+}
+
+int32_t aot_class_is_interface(int32_t tid)
+{
+    if (tid <= 0 || tid >= iface_table_size || iface_table == 0) {
+        return 0;
+    }
+    return iface_table[tid];
+}
+
+int64_t aot_class_get_superclass(int32_t tid)
+{
+    int32_t sup = aot_class_super_tid(tid);
+    if (sup <= 0) {
+        return 0;
+    }
+    return aot_class_of_type(sup);
+}
+
+int32_t aot_class_is_assignable_from(int32_t self_tid, int32_t other_tid)
+{
+    if (self_tid <= 0 || other_tid <= 0) {
+        return 0;
+    }
+    if (self_tid == other_tid) {
+        return 1;
+    }
+    return aot_is_subtype(other_tid, self_tid);
+}
+
 void aot_set_string_type(int32_t type_id)
 {
     aot_string_type_id = type_id;

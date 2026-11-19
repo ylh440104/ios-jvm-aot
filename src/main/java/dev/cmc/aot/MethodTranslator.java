@@ -270,11 +270,13 @@ public final class MethodTranslator {
                     pushFloatLit(fl);
                 } else if (c instanceof Double d) {
                     pushDoubleLit(d);
-                } else if (c instanceof String s) {
-                    pushStringLit(s);
-                } else {
-                    fail("unsupported ldc constant: " + c);
-                }
+} else if (c instanceof String s) {
+                     pushStringLit(s);
+                 } else if (c instanceof org.objectweb.asm.Type t) {
+                     emitClassLiteral(t);
+                 } else {
+                     fail("unsupported ldc constant: " + c);
+                 }
             }
             case Opcodes.ILOAD -> pushIntFromLocal(((VarInsnNode) insn).var);
             case Opcodes.LLOAD -> pushLongFromLocal(((VarInsnNode) insn).var);
@@ -2427,6 +2429,32 @@ String objv = popRef();
         return false;
     }
 
+    private void emitClassLiteral(org.objectweb.asm.Type t) {
+        String desc;
+        switch (t.getSort()) {
+            case org.objectweb.asm.Type.OBJECT -> desc = t.getInternalName();
+            case org.objectweb.asm.Type.ARRAY -> desc = t.getDescriptor();
+            case org.objectweb.asm.Type.BOOLEAN -> desc = "Z";
+            case org.objectweb.asm.Type.BYTE -> desc = "B";
+            case org.objectweb.asm.Type.CHAR -> desc = "C";
+            case org.objectweb.asm.Type.SHORT -> desc = "S";
+            case org.objectweb.asm.Type.INT -> desc = "I";
+            case org.objectweb.asm.Type.LONG -> desc = "J";
+            case org.objectweb.asm.Type.FLOAT -> desc = "F";
+            case org.objectweb.asm.Type.DOUBLE -> desc = "D";
+            case org.objectweb.asm.Type.VOID -> desc = "V";
+            default -> {
+                pushIntLit(0);
+                return;
+            }
+        }
+        declares.add("declare i64 @aot_class_of_type(i32)");
+        String r = nv("v");
+        body.append("  ").append(r).append(" = call i64 @aot_class_of_type(i32 ")
+            .append(layout.typeId(desc)).append(")\n");
+        pushRef(r);
+    }
+
     private void emitIllegalMonitor(String rc) {
         String bad = nv("im");
         body.append("  ").append(bad).append(" = icmp slt i32 ").append(rc).append(", 0\n");
@@ -2615,6 +2643,43 @@ String objv = popRef();
             String fv = nv("v");
             body.append("  ").append(fv).append(" = sitofp i32 ").append(r).append(" to float\n");
             pushFloat(fv);
+            return true;
+        }
+        if ("getSuperclass()Ljava/lang/Class;".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_class_get_superclass(i32)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_class_get_superclass(i32 ").append(cid).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("isInterface()Z".equals(key)) {
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i32 @aot_class_is_interface(i32)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_class_is_interface(i32 ").append(cid).append(")\n");
+            pushInt(r);
+            return true;
+        }
+        if ("isAssignableFrom(Ljava/lang/Class;)Z".equals(key)) {
+            String other = popRef();
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i32 @aot_class_is_assignable_from(i32, i32)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String oid = nv("v");
+            body.append("  ").append(oid).append(" = call i32 @aot_class_id(i64 ").append(other).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i32 @aot_class_is_assignable_from(i32 ").append(cid)
+                .append(", i32 ").append(oid).append(")\n");
+            pushInt(r);
             return true;
         }
         if ("getDeclaredFields()[Ljava/lang/reflect/Field;".equals(key)) {
