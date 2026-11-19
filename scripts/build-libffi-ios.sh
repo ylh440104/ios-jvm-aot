@@ -23,20 +23,25 @@ else
     TRAMP=1
 fi
 
-sh "$FFI/gen-headers.sh" "$HDR" "$TRAMP" 0
+sh "$FFI/gen-headers.sh" "$HDR" "$TRAMP" 0 AARCH64
 
 SDKPATH=$(xcrun --sdk "$SDKNAME" --show-sdk-path)
 CFLAGS="-target $TARGET -isysroot $SDKPATH -O2 -fPIC -DFFI_EXEC_TRAMPOLINE_TABLE=$TRAMP"
-INC="-I$HDR -I$FFI/include -I$FFI/src -I$FFI/src/aarch64 -I$FFI"
+INC="-I$FFI/src/aarch64 -I$HDR -I$FFI/include -I$FFI/src -I$FFI"
 
 OBJS=""
-for f in prep_cif closures debug types raw_api tramp java_raw_api aarch64/ffi; do
-    o="$OUT/$(basename "$f").o"
+for f in prep_cif closures debug types raw_api tramp java_raw_api; do
+    o="$OUT/$f.o"
+    xcrun --sdk "$SDKNAME" clang $CFLAGS $INC -c "$FFI/src/$f.c" -o "$o"
+    OBJS="$OBJS $o"
+done
+for f in aarch64/ffi; do
+    o="$OUT/aarch64-ffi.o"
     xcrun --sdk "$SDKNAME" clang $CFLAGS $INC -c "$FFI/src/$f.c" -o "$o"
     OBJS="$OBJS $o"
 done
 for f in aarch64/sysv aarch64/trampoline; do
-    o="$OUT/$(basename "$f").o"
+    o="$OUT/$(echo "$f" | tr '/' '-').o"
     xcrun --sdk "$SDKNAME" clang $CFLAGS $INC -c "$FFI/src/$f.S" -o "$o"
     OBJS="$OBJS $o"
 done
