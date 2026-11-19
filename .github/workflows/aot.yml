@@ -41,6 +41,8 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry NumericTest -o build/num.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry TypesTest -o build/ty.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ExcTest -o build/ec.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry RangeTest -o build/rg.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry EdgeTest -o build/eg.ll
 
       - name: Verify IR is well formed
         run: |
@@ -52,12 +54,14 @@ jobs:
           llvm-as build/num.ll -o build/num.bc
           llvm-as build/ty.ll -o build/ty.bc
           llvm-as build/ec.ll -o build/ec.bc
+          llvm-as build/rg.ll -o build/rg.bc
+          llvm-as build/eg.ll -o build/eg.bc
           echo IR_VERIFY_OK
 
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg; do
             name="${t%%:*}"
             tag="${t##*:}"
             lli "build/$tag.bc" > "build/$tag.txt"
@@ -69,7 +73,7 @@ jobs:
 
       - name: Compile with clang
         run: |
-          for t in hello obj arr st rf num ty ec; do
+          for t in hello obj arr st rf num ty ec rg eg; do
             clang -O0 build/$t.ll -o build/$t-o0-bin
             ./build/$t-o0-bin
             clang -O1 build/$t.ll -o build/$t-bin
@@ -97,7 +101,7 @@ jobs:
           javac -d build/classes testdata/*.java
 
       - name: Emit LLVM IR
-        run: java -jar target/ios-jvm-aot.jar -cp build/classes -o build/out.ll
+        run: java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/out.ll
 
       - name: Link for iOS simulator
         run: |

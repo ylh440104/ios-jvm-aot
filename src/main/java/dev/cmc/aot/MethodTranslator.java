@@ -52,6 +52,7 @@ public final class MethodTranslator {
     private boolean terminated;
     private String handlerDispatch;
     private String dispatchCode;
+    private boolean hasHandlers;
     private final List<String> handlerLabels = new ArrayList<>();
 
     private MethodTranslator(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares, Layout layout, Frame<BasicValue>[] frames) {
@@ -93,6 +94,8 @@ public final class MethodTranslator {
         body.append("  %stack = alloca [").append(STACK_SLOTS).append(" x i64]\n");
         body.append("  %sp = alloca i32\n");
         body.append("  store i32 0, ptr %sp\n");
+        body.append("  %pc = alloca i32\n");
+        body.append("  store i32 0, ptr %pc\n");
 
         int slot = 0;
         if (isInstance) {
@@ -132,6 +135,9 @@ public final class MethodTranslator {
             if (terminated && !(insn instanceof LabelNode)) {
                 body.append("  ").append(nv("dead")).append(":\n");
                 terminated = false;
+            }
+            if (hasHandlers && mayThrow(insn)) {
+                body.append("  store i32 ").append(insnIndex).append(", ptr %pc\n");
             }
             translateInsn(insn);
         }
@@ -330,18 +336,14 @@ public final class MethodTranslator {
                 String r = nv("v");
                 body.append("  ").append(r).append(" = sitofp i64 ").append(a).append(" to double\n");
                 pushDouble(r);
-            }
+}
             case Opcodes.F2I -> {
                 String a = popFloat();
-                String r = nv("v");
-                body.append("  ").append(r).append(" = fptosi float ").append(a).append(" to i32\n");
-                pushInt(r);
+                pushInt(f2i32(a, false));
             }
             case Opcodes.F2L -> {
                 String a = popFloat();
-                String r = nv("v");
-                body.append("  ").append(r).append(" = fptosi float ").append(a).append(" to i64\n");
-                pushLong(r);
+                pushLong(f2i64(a, false));
             }
             case Opcodes.F2D -> {
                 String a = popFloat();
@@ -351,15 +353,11 @@ public final class MethodTranslator {
             }
             case Opcodes.D2I -> {
                 String a = popDouble();
-                String r = nv("v");
-                body.append("  ").append(r).append(" = fptosi double ").append(a).append(" to i32\n");
-                pushInt(r);
+                pushInt(f2i32(a, true));
             }
             case Opcodes.D2L -> {
                 String a = popDouble();
-                String r = nv("v");
-                body.append("  ").append(r).append(" = fptosi double ").append(a).append(" to i64\n");
-                pushLong(r);
+                pushLong(f2i64(a, true));
             }
             case Opcodes.D2F -> {
                 String a = popDouble();
@@ -517,6 +515,44 @@ public final class MethodTranslator {
         return layout.staticLabel(f);
     }
 
+    private boolean mayThrow(AbstractInsnNode insn) {
+        int op = insn.getOpcode();
+        return op == Opcodes.INVOKESTATIC
+            || op == Opcodes.INVOKEVIRTUAL
+            || op == Opcodes.INVOKESPECIAL
+            || op == Opcodes.INVOKEINTERFACE
+            || op == Opcodes.NEW
+            || op == Opcodes.NEWARRAY
+            || op == Opcodes.ANEWARRAY
+            || op == Opcodes.ATHROW
+            || op == Opcodes.CHECKCAST
+            || op == Opcodes.IDIV
+            || op == Opcodes.IREM
+            || op == Opcodes.LDIV
+            || op == Opcodes.LREM
+            || op == Opcodes.GETFIELD
+            || op == Opcodes.PUTFIELD
+            || op == Opcodes.GETSTATIC
+            || op == Opcodes.PUTSTATIC
+            || op == Opcodes.ARRAYLENGTH
+            || op == Opcodes.IALOAD
+            || op == Opcodes.LALOAD
+            || op == Opcodes.FALOAD
+            || op == Opcodes.DALOAD
+            || op == Opcodes.AALOAD
+            || op == Opcodes.BALOAD
+            || op == Opcodes.CALOAD
+            || op == Opcodes.SALOAD
+            || op == Opcodes.IASTORE
+            || op == Opcodes.LASTORE
+            || op == Opcodes.FASTORE
+            || op == Opcodes.DASTORE
+            || op == Opcodes.AASTORE
+            || op == Opcodes.BASTORE
+            || op == Opcodes.CASTORE
+            || op == Opcodes.SASTORE;
+    }
+
     private void aThrow() {
         String ev = popRef();
         body.append("  store i64 ").append(ev).append(", ptr @.pending_exc\n");
@@ -527,15 +563,17 @@ public final class MethodTranslator {
         if (mn.tryCatchBlocks == null || mn.tryCatchBlocks.isEmpty()) {
             return;
         }
+        hasHandlers = true;
         handlerLabels.clear();
         String dispatch = "excd" + (tmp++);
         for (int i = 0; i < mn.tryCatchBlocks.size(); i++) {
-            String hl = "exch" + (tmp++);
-            handlerLabels.add(hl);
+            handlerLabels.add("exch" + (tmp++));
         }
         handlerDispatch = dispatch;
         StringBuilder out = new StringBuilder();
         out.append(dispatch).append(":\n");
+        String pcv = nv("pc");
+        out.append("  ").append(pcv).append(" = load i32, ptr %pc\n");
         String pe = nv("pe");
         out.append("  ").append(pe).append(" = load i64, ptr @.pending_exc\n");
         String op = nv("pe");
@@ -546,12 +584,19 @@ public final class MethodTranslator {
         out.append("  ").append(tid).append(" = load i32, ptr ").append(tp).append("\n");
         for (int i = 0; i < mn.tryCatchBlocks.size(); i++) {
             org.objectweb.asm.tree.TryCatchBlockNode tcb = mn.tryCatchBlocks.get(i);
-            String ht = tcb.type;
-            String cond;
-            if (ht == null) {
-                cond = null;
+            int lo = mn.instructions.indexOf(tcb.start);
+            int hi = mn.instructions.indexOf(tcb.end);
+            String geLo = nv("pe");
+            out.append("  ").append(geLo).append(" = icmp sge i32 ").append(pcv).append(", ").append(lo).append("\n");
+            String ltHi = nv("pe");
+            out.append("  ").append(ltHi).append(" = icmp slt i32 ").append(pcv).append(", ").append(hi).append("\n");
+            String inRange = nv("pe");
+            out.append("  ").append(inRange).append(" = and i1 ").append(geLo).append(", ").append(ltHi).append("\n");
+            String typeOk;
+            if (tcb.type == null) {
+                typeOk = null;
             } else {
-                String idx = typeIndex(ht);
+                String idx = typeIndex(tcb.type);
                 String base = nv("pe");
                 out.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots())
                     .append(" x i32], ptr ").append(idx).append(", i64 0, i32 0\n");
@@ -561,16 +606,19 @@ public final class MethodTranslator {
                 out.append("  ").append(ok).append(" = load i32, ptr ").append(cell).append("\n");
                 String nzc = nv("pe");
                 out.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
-                cond = nzc;
+                typeOk = nzc;
+            }
+            String hit;
+            if (typeOk == null) {
+                hit = inRange;
+            } else {
+                hit = nv("pe");
+                out.append("  ").append(hit).append(" = and i1 ").append(inRange).append(", ").append(typeOk).append("\n");
             }
             String next = "exdn" + (tmp++);
-            if (cond == null) {
-                out.append("  br label %").append(handlerLabels.get(i)).append("\n");
-            } else {
-                out.append("  br i1 ").append(cond).append(", label %").append(handlerLabels.get(i))
-                    .append(", label %").append(next).append("\n");
-                out.append(next).append(":\n");
-            }
+            out.append("  br i1 ").append(hit).append(", label %").append(handlerLabels.get(i))
+                .append(", label %").append(next).append("\n");
+            out.append(next).append(":\n");
         }
         out.append("  ret i32 0\n");
         dispatchCode = out.toString();
@@ -630,6 +678,58 @@ public final class MethodTranslator {
         terminated = false;
     }
 
+    private String f2i32(String val, boolean isDouble) {
+        String ty = isDouble ? "double" : "float";
+        
+        String nan = nv("c");
+        body.append("  ").append(nan).append(" = fcmp uno ").append(ty).append(" ").append(val).append(", ").append(val).append("\n");
+        String hi = nv("c");
+        if (isDouble) {
+            body.append("  ").append(hi).append(" = fcmp ogt double ").append(val).append(", 2147483647.0\n");
+        } else {
+            body.append("  ").append(hi).append(" = fcmp oge float ").append(val).append(", 0x41E0000000000000\n");
+        }
+        String lo = nv("c");
+        if (isDouble) {
+            body.append("  ").append(lo).append(" = fcmp olt double ").append(val).append(", -2147483648.0\n");
+        } else {
+            body.append("  ").append(lo).append(" = fcmp olt float ").append(val).append(", 0xC1E0000000000000\n");
+        }
+        String cv = nv("c");
+        body.append("  ").append(cv).append(" = fptosi ").append(ty).append(" ").append(val).append(" to i32\n");
+        String c1 = nv("c");
+        body.append("  ").append(c1).append(" = select i1 ").append(hi).append(", i32 2147483647, i32 ").append(cv).append("\n");
+        String c2 = nv("c");
+        body.append("  ").append(c2).append(" = select i1 ").append(lo).append(", i32 -2147483648, i32 ").append(c1).append("\n");
+        String res = nv("c");
+        body.append("  ").append(res).append(" = select i1 ").append(nan).append(", i32 0, i32 ").append(c2).append("\n");
+        return res;
+    }
+
+    private String f2i64(String val, boolean isDouble) {
+        String ty = isDouble ? "double" : "float";
+        String nan = nv("c");
+        body.append("  ").append(nan).append(" = fcmp uno ").append(ty).append(" ").append(val).append(", ").append(val).append("\n");
+        String hi = nv("c");
+        String lo = nv("c");
+        if (isDouble) {
+            body.append("  ").append(hi).append(" = fcmp oge double ").append(val).append(", 0x43E0000000000000\n");
+            body.append("  ").append(lo).append(" = fcmp olt double ").append(val).append(", 0xC3E0000000000000\n");
+        } else {
+            body.append("  ").append(hi).append(" = fcmp oge float ").append(val).append(", 0x43E0000000000000\n");
+            body.append("  ").append(lo).append(" = fcmp olt float ").append(val).append(", 0xC3E0000000000000\n");
+        }
+        String cv = nv("c");
+        body.append("  ").append(cv).append(" = fptosi ").append(ty).append(" ").append(val).append(" to i64\n");
+        String c1 = nv("c");
+        body.append("  ").append(c1).append(" = select i1 ").append(hi).append(", i64 9223372036854775807, i64 ").append(cv).append("\n");
+        String c2 = nv("c");
+        body.append("  ").append(c2).append(" = select i1 ").append(lo).append(", i64 -9223372036854775808, i64 ").append(c1).append("\n");
+        String res = nv("c");
+        body.append("  ").append(res).append(" = select i1 ").append(nan).append(", i64 0, i64 ").append(c2).append("\n");
+        return res;
+    }
+
     private String intArithLlvm(int op) {
         return switch (op) {
             case Opcodes.IADD -> "add";
@@ -647,22 +747,42 @@ public final class MethodTranslator {
     private void intArith(int op) {
         String b = popInt();
         String a = popInt();
+        String sh;
+        if (op == Opcodes.ISHL || op == Opcodes.ISHR || op == Opcodes.IUSHR) {
+            String m = nv("v");
+            body.append("  ").append(m).append(" = and i32 ").append(b).append(", 31\n");
+            sh = m;
+        } else {
+            sh = b;
+        }
         String r = nv("v");
-        body.append("  ").append(r).append(" = ").append(intArithLlvm(op)).append(" i32 ").append(a).append(", ").append(b).append("\n");
+        body.append("  ").append(r).append(" = ").append(intArithLlvm(op)).append(" i32 ").append(a).append(", ").append(sh).append("\n");
         pushInt(r);
     }
 
     private void intDivRem(int op) {
         String b = popInt();
         String a = popInt();
-        String kind = op == Opcodes.IDIV ? "sdiv" : "srem";
         String zc = nv("c");
         body.append("  ").append(zc).append(" = icmp eq i32 ").append(b).append(", 0\n");
         String bb = nv("b");
         body.append("  ").append(bb).append(" = select i1 ").append(zc).append(", i32 1, i32 ").append(b).append("\n");
-        String r = nv("v");
-        body.append("  ").append(r).append(" = ").append(kind).append(" i32 ").append(a).append(", ").append(bb).append("\n");
-        pushInt(r);
+        String minc = nv("c");
+        body.append("  ").append(minc).append(" = icmp eq i32 ").append(a).append(", -2147483648\n");
+        String negc = nv("c");
+        body.append("  ").append(negc).append(" = icmp eq i32 ").append(bb).append(", -1\n");
+        String ovf = nv("c");
+        body.append("  ").append(ovf).append(" = and i1 ").append(minc).append(", ").append(negc).append("\n");
+        String aadj = nv("b");
+        body.append("  ").append(aadj).append(" = select i1 ").append(ovf).append(", i32 -2147483647, i32 ").append(a).append("\n");
+        String raw = nv("v");
+        body.append("  ").append(raw).append(" = ").append(op == Opcodes.IDIV ? "sdiv" : "srem")
+            .append(" i32 ").append(aadj).append(", ").append(bb).append("\n");
+        String ovfQuo = nv("v");
+        body.append("  ").append(ovfQuo).append(" = select i1 ").append(ovf).append(", i32 -2147483648, i32 ").append(raw).append("\n");
+        String ovfRem = nv("v");
+        body.append("  ").append(ovfRem).append(" = select i1 ").append(ovf).append(", i32 0, i32 ").append(raw).append("\n");
+        pushInt(op == Opcodes.IDIV ? ovfQuo : ovfRem);
     }
 
     private String longArithLlvm(int op) {
@@ -683,8 +803,10 @@ public final class MethodTranslator {
         if (op == Opcodes.LSHL || op == Opcodes.LSHR || op == Opcodes.LUSHR) {
             String sh = popInt();
             String a = popLong();
+            String m = nv("s");
+            body.append("  ").append(m).append(" = and i32 ").append(sh).append(", 63\n");
             String s64 = nv("s");
-            body.append("  ").append(s64).append(" = sext i32 ").append(sh).append(" to i64\n");
+            body.append("  ").append(s64).append(" = zext i32 ").append(m).append(" to i64\n");
             String r = nv("v");
             body.append("  ").append(r).append(" = ").append(longArithLlvm(op)).append(" i64 ").append(a).append(", ").append(s64).append("\n");
             pushLong(r);
@@ -700,14 +822,26 @@ public final class MethodTranslator {
     private void longDivRem(int op) {
         String b = popLong();
         String a = popLong();
-        String kind = op == Opcodes.LDIV ? "sdiv" : "srem";
         String zc = nv("c");
         body.append("  ").append(zc).append(" = icmp eq i64 ").append(b).append(", 0\n");
         String bb = nv("b");
         body.append("  ").append(bb).append(" = select i1 ").append(zc).append(", i64 1, i64 ").append(b).append("\n");
-        String r = nv("v");
-        body.append("  ").append(r).append(" = ").append(kind).append(" i64 ").append(a).append(", ").append(bb).append("\n");
-        pushLong(r);
+        String minc = nv("c");
+        body.append("  ").append(minc).append(" = icmp eq i64 ").append(a).append(", -9223372036854775808\n");
+        String negc = nv("c");
+        body.append("  ").append(negc).append(" = icmp eq i64 ").append(bb).append(", -1\n");
+        String ovf = nv("c");
+        body.append("  ").append(ovf).append(" = and i1 ").append(minc).append(", ").append(negc).append("\n");
+        String aadj = nv("b");
+        body.append("  ").append(aadj).append(" = select i1 ").append(ovf).append(", i64 -9223372036854775807, i64 ").append(a).append("\n");
+        String raw = nv("v");
+        body.append("  ").append(raw).append(" = ").append(op == Opcodes.LDIV ? "sdiv" : "srem")
+            .append(" i64 ").append(aadj).append(", ").append(bb).append("\n");
+        String ovfQuo = nv("v");
+        body.append("  ").append(ovfQuo).append(" = select i1 ").append(ovf).append(", i64 -9223372036854775808, i64 ").append(raw).append("\n");
+        String ovfRem = nv("v");
+        body.append("  ").append(ovfRem).append(" = select i1 ").append(ovf).append(", i64 0, i64 ").append(raw).append("\n");
+        pushLong(op == Opcodes.LDIV ? ovfQuo : ovfRem);
     }
 
     private String floatArithLlvm(int op) {
@@ -1312,31 +1446,29 @@ public final class MethodTranslator {
     }
 
     private void pushFloatLit(float v) {
-        pushFloat(fmtFloat(v));
+        pushFloatBits(v);
     }
 
     private void pushDoubleLit(double v) {
-        pushDouble(fmtDouble(v));
+        pushDoubleBits(v);
     }
 
-    private String fmtFloat(float v) {
-        if (Float.isNaN(v)) {
-            return "0x7FF80000";
-        }
-        if (Float.isInfinite(v)) {
-            return v > 0 ? "0x7F800000" : "0xFF800000";
-        }
-        return String.valueOf(v);
+    private void pushDoubleBits(double v) {
+        String b = nv("d");
+        body.append("  ").append(b).append(" = bitcast i64 ").append(Double.doubleToRawLongBits(v)).append(" to double\n");
+        pushSlot(new Slot("D", b));
     }
 
-    private String fmtDouble(double v) {
-        if (Double.isNaN(v)) {
-            return "0x7FF8000000000000";
-        }
-        if (Double.isInfinite(v)) {
-            return v > 0 ? "0x7FF0000000000000" : "0xFFF0000000000000";
-        }
-        return String.valueOf(v);
+
+
+    private String floatBitsLit(float v) {
+        return String.valueOf(Float.floatToRawIntBits(v));
+    }
+
+    private void pushFloatBits(float v) {
+        String b = nv("f");
+        body.append("  ").append(b).append(" = bitcast i32 ").append(floatBitsLit(v)).append(" to float\n");
+        pushSlot(new Slot("F", b));
     }
 
     private void pushInt(String v32) {
