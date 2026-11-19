@@ -67,12 +67,26 @@ jobs:
             name="${t%%:*}"
             tag="${t##*:}"
             clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread
+            set +e
             "./build/$tag-o0" > "build/$tag-o0.txt"
+            rc0=$?
+            set -e
+            if [ $rc0 -ne 0 ]; then
+              echo "CRASH ${name} O0 exit=$rc0"
+              exit 1
+            fi
             ( cd build/classes && java "$name" ) > "build/$tag.golden"
             echo "--- $name O0 ---"
             diff "build/$tag.golden" "build/$tag-o0.txt" && echo "${name}_O0_OK"
             clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1" -lpthread
+            set +e
             "./build/$tag-o1" > "build/$tag-o1.txt"
+            rc1=$?
+            set -e
+            if [ $rc1 -ne 0 ]; then
+              echo "CRASH ${name} O1 exit=$rc1"
+              exit 1
+            fi
             echo "--- $name O1 ---"
             diff "build/$tag.golden" "build/$tag-o1.txt" && echo "${name}_O1_OK"
           done

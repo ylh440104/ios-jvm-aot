@@ -1453,16 +1453,25 @@ private String currentHandler() {
         for (int i = kinds.size() - 1; i >= 0; i--) {
             raw[i] = popOfKind(kinds.get(i));
         }
-        String objv = popRef();
+String objv = popRef();
         if (m.owner.startsWith("java/") && !layout.hasSlot(m.name, m.desc)) {
             body.append("  ; unimplemented jdk virtual ").append(m.owner).append('.').append(m.name).append("\n");
             pushReturnPlaceholder(m.desc);
             return;
         }
-        String objp = toPtr(objv);
         int slot = layout.slotOf(m.name, m.desc);
+        String nulv = nv("vn");
+        body.append("  ").append(nulv).append(" = icmp eq i64 ").append(objv).append(", 0\n");
+        String jl = "Lx" + (labelSeq++);
+        body.append("  br i1 ").append(nulv).append(", label %").append(jl).append("_nul, label %").append(jl).append("_go\n");
+        body.append(jl).append("_nul:\n");
+        String nulZero = "0";
+        body.append("  br label %").append(jl).append("_end\n");
+        body.append(jl).append("_go:\n");
+        String objp2 = nv("vp");
+        body.append("  ").append(objp2).append(" = inttoptr i64 ").append(objv).append(" to ptr\n");
         String vtp = nv("vt");
-        body.append("  ").append(vtp).append(" = load ptr, ptr ").append(objp).append("\n");
+        body.append("  ").append(vtp).append(" = load ptr, ptr ").append(objp2).append("\n");
         String fpp = nv("vf");
         body.append("  ").append(fpp).append(" = getelementptr ptr, ptr ").append(vtp).append(", i32 ").append(slot).append("\n");
         String fnp = nv("fn");
@@ -1473,10 +1482,16 @@ private String currentHandler() {
             String at = "F".equals(ak) ? "i32" : TypeInfo.llvm(ak);
             callArgs.append(", ").append(at).append(" ").append(raw[i]);
         }
-        String r = nv("r");
-        body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" ").append(fnp).append("(").append(callArgs).append(")\n");
+        String rc = nv("r");
+        String rll = retLlvm(m.desc);
+        body.append("  ").append(rc).append(" = call ").append(rll).append(" ").append(fnp).append("(").append(callArgs).append(")\n");
+        body.append("  br label %").append(jl).append("_end\n");
+        body.append(jl).append("_end:\n");
+        String merged = nv("rm");
+        body.append("  ").append(merged).append(" = phi ").append(rll).append(" [ ").append(nulZero)
+            .append(", %").append(jl).append("_nul ], [ ").append(rc).append(", %").append(jl).append("_go ]\n");
         emitCallUnwind();
-        pushReturnValue(m.desc, r);
+        pushReturnValue(m.desc, merged);
     }
 
     private void invoke(MethodInsnNode m) {
