@@ -220,10 +220,49 @@ jobs:
           else
             echo "IOS_CLOSURE_PENDING (trampoline table path not yet working on ios)"
           fi
+      - name: Build iOS app bundle
+        run: |
+          set -e
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -target ios -o build/ios-app.ll
+          APP=build/AotDemo.app
+          rm -rf "$APP"
+          mkdir -p "$APP"
+          xcrun --sdk iphonesimulator clang -O1 \
+            -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
+            -fobjc-arc -fblocks \
+            -Ivendor/libffi/src/aarch64 -Ibuild/ios/ffi-include \
+            -Ivendor/libffi/include -Ivendor/libffi/src -Ivendor/libffi \
+            build/ios-app.ll src/main/c/runtime.c platform/ios/main.m build/ios/libffi.a \
+            -framework UIKit -framework Foundation \
+            -o "$APP/AotDemo"
+          plutil -create xml1 "$APP/Info.plist"
+          plutil -insert CFBundleExecutable -string AotDemo "$APP/Info.plist"
+          plutil -insert CFBundleIdentifier -string dev.cmc.aot.demo "$APP/Info.plist"
+          plutil -insert CFBundleName -string AotDemo "$APP/Info.plist"
+          plutil -insert CFBundleVersion -string 1 "$APP/Info.plist"
+          plutil -insert CFBundleShortVersionString -string 1.0 "$APP/Info.plist"
+          plutil -insert UIDeviceFamily -json '[2]' "$APP/Info.plist"
+          plutil -insert MinimumOSVersion -string 16.0 "$APP/Info.plist"
+          file "$APP/AotDemo"
+          plutil -p "$APP/Info.plist"
+
+      - name: Run iOS app in simulator
+        run: |
+          set -e
+          xcrun simctl boot "iPhone 15" || true
+          xcrun simctl bootstatus "iPhone 15" -b || true
+          xcrun simctl install booted build/AotDemo.app
+          xcrun simctl launch --console-pty booted dev.cmc.aot.demo > build/app-out.txt 2>&1 &
+          sleep 12
+          cat build/app-out.txt
+          grep -q "hello from java" build/app-out.txt && echo IOS_APP_RUNS || echo IOS_APP_NO_OUTPUT
+          xcrun simctl uninstall booted dev.cmc.aot.demo || true
+
       - name: Build iOS device object
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphonesimulator clang -O1 -c \
+          xcrun --sdk iphoneos clang -O1 -c \
             -target arm64-apple-ios16.0 -isysroot "$SDK" build/ios-Hello.ll -o build/hello-device.o
           file build/hello-device.o
           lipo -info build/hello-device.o

@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 public final class Main {
 
     public static void main(String[] args) throws IOException {
+        String target = "native";
         Path cp = null;
         Path out = Path.of("out.ll");
         String entryClass = null;
@@ -22,6 +23,7 @@ public final class Main {
                 case "-cp" -> cp = Path.of(args[++i]);
                 case "-o" -> out = Path.of(args[++i]);
                 case "-entry" -> entryClass = args[++i];
+                case "-target" -> target = args[++i];
                 default -> {
                     System.err.println("unknown arg " + args[i]);
                     System.exit(2);
@@ -260,7 +262,12 @@ public final class Main {
         ir.append(extraFuncs);
         ir.append(methodTrampolines);
         ir.append(ctorWrappers);
-        ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        boolean iosTarget = "ios".equals(target);
+        if (iosTarget) {
+            ir.append("define void @aot_ios_entry(ptr %argv) {\nentry:\n");
+        } else {
+            ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        }
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
         ir.append("  store i64 ").append(layout.rootCount(pool)).append(", ptr @gc_root_count\n");
@@ -313,7 +320,11 @@ public final class Main {
         } else {
             ir.append("  %r = add i32 0, 0\n");
         }
-        ir.append("  ret i32 %r\n}\n");
+        if (iosTarget) {
+            ir.append("  ret void\n}\n");
+        } else {
+            ir.append("  ret i32 %r\n}\n");
+        }
 
         Path parent = out.toAbsolutePath().getParent();
         if (parent != null) {
