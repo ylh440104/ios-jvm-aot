@@ -14,6 +14,7 @@ final class FfiSupport {
     static final int K_F32 = 3;
     static final int K_F64 = 4;
     static final int K_PTR = 5;
+    static final int K_BUF = 6;
 
     static final class Bind {
         final String cName;
@@ -42,7 +43,7 @@ final class FfiSupport {
             "aot_ffi_open", K_PTR, K_PTR);
 
         reg("org/lwjgl/system/SharedLibrary", "getFunctionAddress", "(Ljava/lang/CharSequence;)J",
-            "aot_ffi_sym", K_PTR, K_PTR, K_PTR);
+            "aot_ffi_sym_nohandle", K_PTR, K_PTR);
         reg("org/lwjgl/system/Library", "getFunctionAddress", "(JLjava/lang/CharSequence;)J",
             "aot_ffi_sym", K_PTR, K_PTR, K_PTR);
 
@@ -87,6 +88,11 @@ final class FfiSupport {
         reg("NativeCall", "invokeD", "(JIJIJ)J", "aot_ffi_invoke", K_I64,
             K_I64, K_I32, K_I64, K_I32, K_I64);
         reg("NativeCall", "arrayAddr", "(Ljava/lang/Object;)J", "aot_object_array_ptr", K_PTR, K_PTR);
+        reg("NativeCall", "bufAddr", "(Ljava/lang/Object;)J", "aot_buf_arg_addr", K_PTR, K_PTR);
+        reg("NativeCall", "bufPosAddr", "(Ljava/lang/Object;)J", "aot_buf_arg_pos_addr", K_PTR, K_PTR);
+        reg("NativeCall", "bufBytes", "(Ljava/lang/Object;)J", "aot_buf_arg_bytes", K_I64, K_PTR);
+        reg("NativeCall", "callBuf1", "(JLjava/lang/Object;)I", "aot_ffi_call_buf1", K_I32, K_PTR, K_BUF);
+        reg("NativeCall", "callBuf2", "(JILjava/lang/Object;)I", "aot_ffi_call_buf2", K_I32, K_PTR, K_I32, K_BUF);
     }
 
     static Bind lookup(String owner, String name, String desc) {

@@ -4286,3 +4286,50 @@ void aot_buf_write(int64_t b, int32_t off, int32_t width, int64_t v)
         }
     }
 }
+
+int64_t aot_buf_arg_addr(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)b + 16);
+}
+
+int64_t aot_buf_arg_bytes(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    int32_t elem = *(int32_t *)((char *)(intptr_t)b + 12);
+    int32_t rem = aot_buf_remaining(b);
+    return (int64_t)elem * rem;
+}
+
+int64_t aot_buf_arg_pos_addr(int64_t b)
+{
+    if (b == 0) {
+        return 0;
+    }
+    int64_t base = *(int64_t *)((char *)(intptr_t)b + 16);
+    int32_t elem = *(int32_t *)((char *)(intptr_t)b + 12);
+    int32_t pos = *(int32_t *)((char *)(intptr_t)b + 28);
+    return base + (int64_t)elem * pos;
+}
+
+int32_t aot_ffi_call_buf1(int64_t fn, int64_t addr)
+{
+    if (fn == 0) {
+        return 0;
+    }
+    int32_t (*f)(int64_t) = (int32_t (*)(int64_t))(intptr_t)fn;
+    return f(addr);
+}
+
+int32_t aot_ffi_call_buf2(int64_t fn, int32_t a, int64_t addr)
+{
+    if (fn == 0) {
+        return 0;
+    }
+    int32_t (*f)(int32_t, int64_t) = (int32_t (*)(int32_t, int64_t))(intptr_t)fn;
+    return f(a, addr);
+}

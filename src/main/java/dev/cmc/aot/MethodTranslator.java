@@ -2533,6 +2533,15 @@ String objv = popRef();
         for (int i = want - 1; i >= 0; i--) {
             raw[i] = popByKind(b.args[i]);
         }
+        for (int i = 0; i < want; i++) {
+            if (b.args[i] == FfiSupport.K_BUF) {
+                declares.add("declare i64 @aot_buf_arg_pos_addr(i64)");
+                String conv = nv("v");
+                body.append("  ").append(conv).append(" = call i64 @aot_buf_arg_pos_addr(i64 ")
+                    .append(raw[i]).append(")\n");
+                raw[i] = conv;
+            }
+        }
         String[] argTypes = new String[want];
         StringBuilder sig = new StringBuilder();
         StringBuilder callArgs = new StringBuilder();
@@ -2544,7 +2553,7 @@ String objv = popRef();
             }
             sig.append(argTypes[i]);
             callArgs.append(argTypes[i]).append(" ").append(raw[i]);
-        }
+}
         String retType = llvmOfKind(b.ret);
         declares.add("declare " + retType + " @" + b.cName + "(" + sig + ")");
         if (b.ret == FfiSupport.K_VOID) {
@@ -2566,6 +2575,10 @@ String objv = popRef();
             case FfiSupport.K_I64 -> popLong();
             default -> popRef();
         };
+    }
+
+    private static boolean isPtrKind(int kind) {
+        return kind == FfiSupport.K_BUF || kind == FfiSupport.K_PTR || kind == FfiSupport.K_I64;
     }
 
     private void pushByKind(int kind, String v) {
