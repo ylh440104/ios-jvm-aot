@@ -171,6 +171,10 @@ public final class MethodTranslator {
             }
             case Opcodes.IFEQ, Opcodes.IFNE, Opcodes.IFLT, Opcodes.IFGE, Opcodes.IFGT, Opcodes.IFLE -> ifSingle(op, (JumpInsnNode) insn);
             case Opcodes.IF_ICMPEQ, Opcodes.IF_ICMPNE, Opcodes.IF_ICMPLT, Opcodes.IF_ICMPGE, Opcodes.IF_ICMPGT, Opcodes.IF_ICMPLE -> ifCompare(op, (JumpInsnNode) insn);
+            case Opcodes.IFNULL -> ifRefNull(true, (JumpInsnNode) insn);
+            case Opcodes.IFNONNULL -> ifRefNull(false, (JumpInsnNode) insn);
+            case Opcodes.IF_ACMPEQ -> ifRefCompare(true, (JumpInsnNode) insn);
+            case Opcodes.IF_ACMPNE -> ifRefCompare(false, (JumpInsnNode) insn);
             case Opcodes.GOTO -> {
                 LabelNode target = ((JumpInsnNode) insn).label;
                 body.append("  br label %").append(label(target)).append("\n");
@@ -532,6 +536,29 @@ public final class MethodTranslator {
         };
         String c = nv("c");
         body.append("  ").append(c).append(" = icmp ").append(pred).append(" i32 ").append(a).append(", ").append(b).append("\n");
+        String t = label(j.label);
+        String f = "fall" + (tmp++);
+        body.append("  br i1 ").append(c).append(", label %").append(t).append(", label %").append(f).append("\n");
+        body.append(f).append(":\n");
+        terminated = false;
+    }
+
+    private void ifRefNull(boolean jumpWhenNull, JumpInsnNode j) {
+        String v = pop();
+        String c = nv("c");
+        body.append("  ").append(c).append(" = icmp ").append(jumpWhenNull ? "eq" : "ne").append(" i64 ").append(v).append(", 0\n");
+        String t = label(j.label);
+        String f = "fall" + (tmp++);
+        body.append("  br i1 ").append(c).append(", label %").append(t).append(", label %").append(f).append("\n");
+        body.append(f).append(":\n");
+        terminated = false;
+    }
+
+    private void ifRefCompare(boolean jumpWhenEqual, JumpInsnNode j) {
+        String b = pop();
+        String a = pop();
+        String c = nv("c");
+        body.append("  ").append(c).append(" = icmp ").append(jumpWhenEqual ? "eq" : "ne").append(" i64 ").append(a).append(", ").append(b).append("\n");
         String t = label(j.label);
         String f = "fall" + (tmp++);
         body.append("  br i1 ").append(c).append(", label %").append(t).append(", label %").append(f).append("\n");

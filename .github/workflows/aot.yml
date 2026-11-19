@@ -37,6 +37,7 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/obj.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry ArraysTest -o build/arr.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry StaticsTest -o build/st.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry RefsTest -o build/rf.ll
 
       - name: Verify IR is well formed
         run: |
@@ -44,12 +45,13 @@ jobs:
           llvm-as build/obj.ll -o build/obj.bc
           llvm-as build/arr.ll -o build/arr.bc
           llvm-as build/st.ll -o build/st.bc
+          llvm-as build/rf.ll -o build/rf.bc
           echo IR_VERIFY_OK
 
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf; do
             name="${t%%:*}"
             tag="${t##*:}"
             lli "build/$tag.bc" > "build/$tag.txt"
@@ -61,7 +63,7 @@ jobs:
 
       - name: Compile with clang
         run: |
-          for t in hello obj arr st; do
+          for t in hello obj arr st rf; do
             clang -O1 build/$t.ll -o build/$t-bin
             ./build/$t-bin
           done
