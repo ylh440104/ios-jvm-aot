@@ -23,7 +23,7 @@ jobs:
           llvm-as --version | head -3
 
       - name: Build compiler
-        run: mvn -B -q package
+        run: mvn -B -q package -Dmaven.resources.skip=true
 
       - name: Compile test classes
         run: |
@@ -118,7 +118,7 @@ jobs:
           java-version: '21'
 
       - name: Build compiler
-        run: mvn -B -q package
+        run: mvn -B -q package -Dmaven.resources.skip=true
 
       - name: Compile test classes
         run: |
