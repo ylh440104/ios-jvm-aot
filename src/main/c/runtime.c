@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
+#include <sched.h>
 
 #define GC_MAGIC 0x47434F424A4C4CULL
 #define GC_HEADER 16
@@ -30,13 +32,19 @@ static char *heap_start;
 static char *heap_end;
 static char *bump;
 static gc_header *free_list;
-static gc_frame *frames;
 static uintptr_t *mark_stack;
 static size_t mark_top;
 static size_t mark_cap;
 static size_t live_bytes;
 static size_t threshold;
 static int collecting;
+static pthread_mutex_t heap_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t gc_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
+static __thread gc_frame *tls_frames;
+static gc_frame **all_frames;
+static size_t all_frame_count;
+static size_t all_frame_cap;
 
 extern uint64_t **gc_roots;
 extern int64_t gc_root_count;
@@ -125,22 +133,62 @@ static void mark_drain(void)
     }
 }
 
+typedef struct thread_node {
+    gc_frame **head;
+    struct thread_node *next;
+} thread_node;
+
+static thread_node *threads_list;
+
+static void thread_register(gc_frame **head)
+{
+    thread_node *n = (thread_node *)malloc(sizeof(thread_node));
+    if (!n) {
+        gc_fatal();
+    }
+    n->head = head;
+    pthread_mutex_lock(&frame_lock);
+    n->next = threads_list;
+    threads_list = n;
+    pthread_mutex_unlock(&frame_lock);
+}
+
+static void thread_unregister(gc_frame **head)
+{
+    pthread_mutex_lock(&frame_lock);
+    thread_node **cur = &threads_list;
+    while (*cur) {
+        if ((*cur)->head == head) {
+            thread_node *dead = *cur;
+            *cur = dead->next;
+            free(dead);
+            break;
+        }
+        cur = &(*cur)->next;
+    }
+    pthread_mutex_unlock(&frame_lock);
+}
+
 static void mark_roots(void)
 {
-    for (gc_frame *f = frames; f; f = f->prev) {
-        if (f->locals && f->local_count > 0) {
-            mark_scan((uintptr_t)f->locals, (size_t)f->local_count * sizeof(uint64_t));
-        }
-        if (f->stack && f->sp) {
-            int32_t depth = *f->sp;
-            if (depth < 0) {
-                depth = 0;
+    pthread_mutex_lock(&frame_lock);
+    for (thread_node *n = threads_list; n; n = n->next) {
+        for (gc_frame *f = *n->head; f; f = f->prev) {
+            if (f->locals && f->local_count > 0) {
+                mark_scan((uintptr_t)f->locals, (size_t)f->local_count * sizeof(uint64_t));
             }
-            if (depth > 0) {
-                mark_scan((uintptr_t)f->stack, (size_t)depth * sizeof(uint64_t));
+            if (f->stack && f->sp) {
+                int32_t depth = *f->sp;
+                if (depth < 0) {
+                    depth = 0;
+                }
+                if (depth > 0) {
+                    mark_scan((uintptr_t)f->stack, (size_t)depth * sizeof(uint64_t));
+                }
             }
         }
     }
+    pthread_mutex_unlock(&frame_lock);
     if (gc_roots) {
         for (int64_t i = 0; i < gc_root_count; i++) {
             uint64_t *slot = gc_roots[i];
@@ -176,7 +224,9 @@ static void sweep(void)
 
 void gc_collect(void)
 {
+    pthread_mutex_lock(&gc_lock);
     if (collecting) {
+        pthread_mutex_unlock(&gc_lock);
         return;
     }
     collecting = 1;
@@ -189,6 +239,7 @@ void gc_collect(void)
         threshold = 4u * 1024u * 1024u;
     }
     collecting = 0;
+    pthread_mutex_unlock(&gc_lock);
 }
 
 void gc_init(int64_t bytes)
@@ -247,11 +298,12 @@ static gc_header *take_from_free(size_t need)
 
 void *gc_alloc(int64_t size)
 {
-    if (!heap_start) {
-        gc_init(256 * 1024 * 1024);
-    }
     if (size < 0) {
         return 0;
+    }
+    pthread_mutex_lock(&heap_lock);
+    if (!heap_start) {
+        gc_init(256 * 1024 * 1024);
     }
     size_t need = (size_t)size + GC_HEADER;
     need = (need + GC_ALIGN - 1) & ~(size_t)(GC_ALIGN - 1);
@@ -267,8 +319,17 @@ void *gc_alloc(int64_t size)
         h->magic = GC_MAGIC;
         live_bytes += need;
     }
+    int need_collect = 0;
     if (!h) {
+        need_collect = 1;
+    } else if (live_bytes > threshold) {
+        need_collect = 1;
+    }
+    pthread_mutex_unlock(&heap_lock);
+
+    if (need_collect) {
         gc_collect();
+        pthread_mutex_lock(&heap_lock);
         h = take_from_free(need);
         if (!h && (size_t)(heap_end - bump) >= need) {
             h = (gc_header *)bump;
@@ -277,11 +338,10 @@ void *gc_alloc(int64_t size)
             h->magic = GC_MAGIC;
             live_bytes += need;
         }
+        pthread_mutex_unlock(&heap_lock);
         if (!h) {
             return 0;
         }
-    } else if (live_bytes > threshold) {
-        gc_collect();
     }
 
     void *payload = (char *)h + GC_HEADER;
@@ -307,15 +367,26 @@ void gc_frame_push(gc_frame *frame, uint64_t *locals, int32_t local_count, uint6
     frame->local_count = local_count;
     frame->stack = stack;
     frame->sp = sp;
-    frame->prev = frames;
-    frames = frame;
+    frame->prev = tls_frames;
+    tls_frames = frame;
 }
 
 void gc_frame_pop(gc_frame *frame)
 {
-    if (frames == frame) {
-        frames = frame->prev;
+    if (tls_frames == frame) {
+        tls_frames = frame->prev;
     }
+}
+
+void gc_thread_attach(void)
+{
+    thread_register(&tls_frames);
+}
+
+void gc_thread_detach(void)
+{
+    thread_unregister(&tls_frames);
+    tls_frames = 0;
 }
 
 int64_t gc_live_bytes(void)
@@ -1240,6 +1311,210 @@ void aot_print_object(int64_t obj)
         return;
     }
     printf("obj@%llx", (unsigned long long)(uintptr_t)obj);
+}
+
+typedef struct aot_thread_rec {
+    pthread_t handle;
+    int64_t body;
+    int64_t self;
+    int64_t name;
+    int32_t started;
+    int32_t joined;
+    int32_t detached;
+    struct aot_thread_rec *next;
+} aot_thread_rec;
+
+static aot_thread_rec *thread_recs;
+static pthread_mutex_t thread_rec_lock = PTHREAD_MUTEX_INITIALIZER;
+
+extern void aot_thread_body(int64_t body, int64_t self);
+
+typedef struct {
+    int64_t body;
+    int64_t self;
+} thread_start_arg;
+
+static void *thread_trampoline(void *raw)
+{
+    thread_start_arg *a = (thread_start_arg *)raw;
+    int64_t body = a->body;
+    int64_t self = a->self;
+    free(a);
+    gc_thread_attach();
+    aot_thread_body(body, self);
+    gc_thread_detach();
+    return 0;
+}
+
+int64_t aot_thread_rec_new(void)
+{
+    aot_thread_rec *rec = (aot_thread_rec *)calloc(1, sizeof(aot_thread_rec));
+    if (!rec) {
+        return 0;
+    }
+    pthread_mutex_lock(&thread_rec_lock);
+    rec->next = thread_recs;
+    thread_recs = rec;
+    pthread_mutex_unlock(&thread_rec_lock);
+    return (int64_t)(intptr_t)rec;
+}
+
+void aot_thread_set_body(int64_t thread, int64_t body, int64_t self)
+{
+    if (thread == 0) {
+        return;
+    }
+    aot_thread_rec *rec = (aot_thread_rec *)(intptr_t)thread;
+    rec->body = body;
+    rec->self = self;
+}
+
+int64_t aot_thread_new(int64_t body, int64_t self)
+{
+    aot_thread_rec *rec = (aot_thread_rec *)calloc(1, sizeof(aot_thread_rec));
+    if (!rec) {
+        return 0;
+    }
+    rec->body = body;
+    rec->self = self;
+    pthread_mutex_lock(&thread_rec_lock);
+    rec->next = thread_recs;
+    thread_recs = rec;
+    pthread_mutex_unlock(&thread_rec_lock);
+    return (int64_t)(intptr_t)rec;
+}
+
+void aot_thread_start(int64_t thread)
+{
+    if (thread == 0) {
+        return;
+    }
+    aot_thread_rec *rec = (aot_thread_rec *)(intptr_t)thread;
+    if (rec->started) {
+        return;
+    }
+    thread_start_arg *a = (thread_start_arg *)malloc(sizeof(thread_start_arg));
+    if (!a) {
+        return;
+    }
+    a->body = rec->body;
+    a->self = rec->self;
+    rec->started = 1;
+    if (pthread_create(&rec->handle, 0, thread_trampoline, a) != 0) {
+        rec->started = 0;
+        free(a);
+    }
+}
+
+void aot_thread_join(int64_t thread)
+{
+    if (thread == 0) {
+        return;
+    }
+    aot_thread_rec *rec = (aot_thread_rec *)(intptr_t)thread;
+    if (!rec->started || rec->joined) {
+        return;
+    }
+    rec->joined = 1;
+    pthread_join(rec->handle, 0);
+}
+
+void aot_thread_set_name(int64_t thread, int64_t name)
+{
+    if (thread == 0) {
+        return;
+    }
+    aot_thread_rec *rec = (aot_thread_rec *)(intptr_t)thread;
+    rec->name = name;
+}
+
+void aot_thread_sleep(int64_t millis)
+{
+    if (millis <= 0) {
+        return;
+    }
+    struct timespec ts;
+    ts.tv_sec = (time_t)(millis / 1000);
+    ts.tv_nsec = (long)((millis % 1000) * 1000000L);
+    nanosleep(&ts, 0);
+}
+
+void aot_thread_yield(void)
+{
+    sched_yield();
+}
+
+typedef struct monitor_entry {
+    int64_t obj;
+    pthread_mutex_t lock;
+    int32_t depth;
+    struct monitor_entry *next;
+} monitor_entry;
+
+static monitor_entry *monitors;
+static pthread_mutex_t monitor_table_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static monitor_entry *monitor_of(int64_t obj, int32_t create)
+{
+    pthread_mutex_lock(&monitor_table_lock);
+    for (monitor_entry *e = monitors; e; e = e->next) {
+        if (e->obj == obj) {
+            pthread_mutex_unlock(&monitor_table_lock);
+            return e;
+        }
+    }
+    if (!create) {
+        pthread_mutex_unlock(&monitor_table_lock);
+        return 0;
+    }
+    monitor_entry *e = (monitor_entry *)calloc(1, sizeof(monitor_entry));
+    if (!e) {
+        pthread_mutex_unlock(&monitor_table_lock);
+        return 0;
+    }
+    e->obj = obj;
+    pthread_mutex_init(&e->lock, 0);
+    e->next = monitors;
+    monitors = e;
+    pthread_mutex_unlock(&monitor_table_lock);
+    return e;
+}
+
+int32_t aot_monitor_enter(int64_t obj)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 1);
+    if (!e) {
+        return 0;
+    }
+    pthread_mutex_lock(&e->lock);
+    e->depth++;
+    return 1;
+}
+
+int32_t aot_monitor_exit(int64_t obj)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 0);
+    if (!e) {
+        return 0;
+    }
+    e->depth--;
+    pthread_mutex_unlock(&e->lock);
+    return 1;
+}
+
+int64_t aot_monitor_depth(int64_t obj)
+{
+    if (obj == 0) {
+        return 0;
+    }
+    monitor_entry *e = monitor_of(obj, 0);
+    return e ? (int64_t)e->depth : 0;
 }
 
 int64_t aot_system_nano(void)

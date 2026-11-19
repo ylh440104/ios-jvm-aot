@@ -48,6 +48,8 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry StrTest -o build/sr.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry SbTest -o build/sb.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry CollTest -o build/cl.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ThreadTest -o build/th.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ThreadGc -o build/tg.ll
 
       - name: Verify IR is well formed
         run: |
@@ -59,15 +61,15 @@ jobs:
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg; do
             name="${t%%:*}"
             tag="${t##*:}"
-            clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0"
+            clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread
             "./build/$tag-o0" > "build/$tag-o0.txt"
             ( cd build/classes && java "$name" ) > "build/$tag.golden"
             echo "--- $name O0 ---"
             diff "build/$tag.golden" "build/$tag-o0.txt" && echo "${name}_O0_OK"
-            clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1"
+            clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1" -lpthread
             "./build/$tag-o1" > "build/$tag-o1.txt"
             echo "--- $name O1 ---"
             diff "build/$tag.golden" "build/$tag-o1.txt" && echo "${name}_O1_OK"
@@ -80,7 +82,7 @@ jobs:
           ./build/gc-o1 > build/gc-out.txt
           printf '9000000\n2500\n2501\n958800\n4112\n19901\n' > build/gc-expect.txt
           diff build/gc-expect.txt build/gc-out.txt && echo GC_SEMANTICS_OK
-          clang -O0 testdata/gc_probe.ll src/main/c/runtime.c -o build/gc-probe
+          clang -O0 testdata/gc_probe.ll src/main/c/runtime.c -o build/gc-probe -lpthread
           ./build/gc-probe > build/gc-probe-out.txt
           printf 'live=0\nafter=3120\nafter=0\n' > build/gc-probe-expect.txt
           diff build/gc-probe-expect.txt build/gc-probe-out.txt && echo GC_RECLAIM_OK
@@ -113,7 +115,7 @@ jobs:
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
           xcrun --sdk iphonesimulator clang -O1 \
             -target arm64-apple-ios16.0-simulator \
-            -isysroot "$SDK" build/out.ll -o build/hello-sim
+            -isysroot "$SDK" build/out.ll src/main/c/runtime.c -o build/hello-sim
           file build/hello-sim
 
       - name: Build iOS device object

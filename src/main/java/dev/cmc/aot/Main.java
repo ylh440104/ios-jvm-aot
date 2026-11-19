@@ -66,6 +66,9 @@ public final class Main {
         ir.append(layout.renderStatics());
         ir.append(layout.renderTypeTables());
         ir.append("@.pending_exc = global i64 0\n");
+        for (String lock : MethodTranslator.classLockNames()) {
+            ir.append("@").append(lock).append(" = global i8 0\n");
+        }
         ir.append("@gc_roots = global ptr null\n");
         ir.append("@gc_root_count = global i64 0\n");
         ir.append(layout.renderRootTable(pool));
@@ -116,6 +119,19 @@ public final class Main {
         declares.add("declare i64 @aot_system_millis()");
         declares.add("declare void @aot_system_arraycopy(i64, i32, i64, i32, i32, i32)");
         declares.add("declare i64 @aot_arrays_copy_of_width(i64, i32, i32)");
+        declares.add("declare void @gc_thread_attach()");
+        declares.add("declare void @gc_thread_detach()");
+        declares.add("declare i64 @aot_thread_new(i64)");
+        declares.add("declare void @aot_thread_start(i64)");
+        declares.add("declare void @aot_thread_join(i64)");
+        declares.add("declare void @aot_thread_set_name(i64, i64)");
+        declares.add("declare void @aot_thread_sleep(i64)");
+        declares.add("declare void @aot_thread_yield()");
+        declares.add("declare void @aot_dispatch_thread(i64)");
+        declares.add("declare i64 @aot_thread_rec_new()");
+        declares.add("declare void @aot_thread_set_body(i64, i64, i64)");
+        declares.add("declare i32 @aot_monitor_enter(i64)");
+        declares.add("declare i32 @aot_monitor_exit(i64)");
         declares.add("declare void @aot_system_gc()");
         declares.add("declare i64 @aot_list_new()");
         declares.add("declare i64 @aot_list_add(i64, i64)");
@@ -154,6 +170,7 @@ public final class Main {
             ir.append(d).append('\n');
         }
         ir.append('\n').append(funcs);
+        ir.append(ThreadSupport.render(classes, layout));
         ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         ir.append("  call void @gc_init(i64 268435456)\n");
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");

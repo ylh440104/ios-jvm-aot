@@ -171,6 +171,18 @@ public final class Layout {
         addBuiltin("java/lang/Byte", "java/lang/Object");
         addBuiltin("java/lang/Character", "java/lang/Object");
         addBuiltin("java/lang/Number", "java/lang/Object");
+        addBuiltin("java/lang/Runnable", "java/lang/Object");
+        addBuiltin("java/lang/Thread", "java/lang/Object");
+        addBuiltin("java/lang/Iterable", "java/lang/Object");
+        addBuiltin("java/util/Collection", "java/lang/Object");
+        addBuiltin("java/util/List", "java/util/Collection");
+        addBuiltin("java/util/Set", "java/util/Collection");
+        addBuiltin("java/util/Map", "java/lang/Object");
+        addBuiltin("java/util/ArrayList", "java/lang/Object");
+        addBuiltin("java/util/LinkedList", "java/lang/Object");
+        addBuiltin("java/util/HashMap", "java/lang/Object");
+        addBuiltin("java/util/LinkedHashMap", "java/lang/Object");
+        addBuiltin("java/util/Arrays", "java/lang/Object");
     }
 
     private void addBuiltin(String name, String superName) {

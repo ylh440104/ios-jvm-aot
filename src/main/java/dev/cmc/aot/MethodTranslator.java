@@ -54,6 +54,9 @@ public final class MethodTranslator {
     private String dispatchCode;
     private boolean hasHandlers;
     private final List<String> handlerLabels = new ArrayList<>();
+    private int syncDepth;
+    private String syncLock;
+    private static final Set<String> classLocks = new LinkedHashSet<>();
 
     private MethodTranslator(ClassInfo owner, MethodNode mn, StringPool pool, Set<String> declares, Layout layout, Frame<BasicValue>[] frames) {
         this.owner = owner;
@@ -110,6 +113,21 @@ public final class MethodTranslator {
             String tp = localPtr(0);
             body.append("  store i64 %this, ptr ").append(tp).append("\n");
             slot = 1;
+        }
+        boolean syncMethod = (mn.access & org.objectweb.asm.Opcodes.ACC_SYNCHRONIZED) != 0;
+        if (syncMethod) {
+            declares.add("declare i32 @aot_monitor_enter(i64)");
+            declares.add("declare i32 @aot_monitor_exit(i64)");
+            if (isInstance) {
+                syncLock = "%this";
+            } else {
+                syncLock = nv("lock");
+                String label = ".class_lock_" + ClassParser.mangle(owner.name(), "c", "()V");
+                classLocks.add(label);
+                body.append("  ").append(syncLock).append(" = ptrtoint ptr @").append(label).append(" to i64\n");
+            }
+            body.append("  call i32 @aot_monitor_enter(i64 ").append(syncLock).append(")\n");
+            syncDepth++;
         }
         for (int i = 0; i < argKinds.size(); i++) {
             String k = argKinds.get(i);
@@ -474,7 +492,14 @@ public final class MethodTranslator {
                 pushSlot(a);
             }
             case Opcodes.ATHROW -> aThrow();
-            case Opcodes.MONITORENTER, Opcodes.MONITOREXIT -> pop();
+            case Opcodes.MONITORENTER -> {
+                String obj = popRef();
+                body.append("  call i32 @aot_monitor_enter(i64 ").append(obj).append(")\n");
+            }
+            case Opcodes.MONITOREXIT -> {
+                String obj = popRef();
+                body.append("  call i32 @aot_monitor_exit(i64 ").append(obj).append(")\n");
+            }
             case Opcodes.CHECKCAST -> checkCast((TypeInsnNode) insn);
             case Opcodes.INSTANCEOF -> instanceOf((TypeInsnNode) insn);
             case Opcodes.NEW -> newObject((TypeInsnNode) insn);
@@ -678,6 +703,10 @@ public final class MethodTranslator {
         terminated = true;
     }
 
+    public static Set<String> classLockNames() {
+        return classLocks;
+    }
+
     private String methodRetType() {
         String k = TypeInfo.returnKind(mn.desc);
         return "V".equals(k) ? "i32" : TypeInfo.llvm(k);
@@ -686,6 +715,9 @@ public final class MethodTranslator {
     private void emitReturn(String type, String value) {
         String slot = "%ret";
         body.append("  store ").append(type).append(" ").append(value).append(", ptr ").append(slot).append("\n");
+        if (syncDepth > 0) {
+            body.append("  call i32 @aot_monitor_exit(i64 ").append(syncLock).append(")\n");
+        }
         body.append("  call void @gc_frame_pop(ptr %frame)\n");
         String v = nv("rv");
         body.append("  ").append(v).append(" = load ").append(type).append(", ptr ").append(slot).append("\n");
@@ -1059,6 +1091,12 @@ private String currentHandler() {
             pushRef(r);
             return;
         }
+        if ("java/lang/Thread".equals(cls)) {
+            String r = nv("np");
+            body.append("  ").append(r).append(" = call i64 @aot_thread_rec_new()\n");
+            pushRef(r);
+            return;
+        }
         if (!layout.hasClass(cls)) {
             fail("unknown class for new: " + cls);
         }
@@ -1350,6 +1388,21 @@ private String currentHandler() {
             raw[i] = popOfKind(kinds.get(i));
         }
         String objv = popRef();
+        if ("java/lang/Thread".equals(m.owner)) {
+            if (raw.length == 1) {
+                String tp = nv("v");
+                body.append("  ").append(tp).append(" = add i64 ").append(raw[0]).append(", 8\n");
+                String tpp = nv("v");
+                body.append("  ").append(tpp).append(" = inttoptr i64 ").append(tp).append(" to ptr\n");
+                String tid = nv("v");
+                body.append("  ").append(tid).append(" = load i32, ptr ").append(tpp).append("\n");
+                String fn = nv("v");
+                body.append("  ").append(fn).append(" = call i64 @aot_tbody_lookup(i32 ").append(tid).append(")\n");
+                body.append("  call void @aot_thread_set_body(i64 ").append(objv).append(", i64 ").append(fn)
+                    .append(", i64 ").append(raw[0]).append(")\n");
+            }
+            return;
+        }
         if (m.owner.startsWith("java/")) {
             if (isBuiltinContainer(m.owner)) {
                 return;
@@ -1385,6 +1438,9 @@ private String currentHandler() {
             return;
         }
         if (invokeCollection(m)) {
+            return;
+        }
+        if (invokeThread(m)) {
             return;
         }
         if (invokeObjectMethod(m)) {
@@ -1651,6 +1707,51 @@ private String currentHandler() {
             || "java/util/Hashtable".equals(owner);
     }
 
+    private boolean invokeThread(MethodInsnNode m) {
+        String owner = m.owner;
+        String key = m.name + m.desc;
+        if (!"java/lang/Thread".equals(owner) && !"java/lang/Runnable".equals(owner)) {
+            return false;
+        }
+        if ("start()V".equals(key)) {
+            String self = popRef();
+            body.append("  call void @aot_thread_start(i64 ").append(self).append(")\n");
+            return true;
+        }
+        if ("join()V".equals(key)) {
+            String self = popRef();
+            body.append("  call void @aot_thread_join(i64 ").append(self).append(")\n");
+            return true;
+        }
+        if ("run()V".equals(key)) {
+            return false;
+        }
+        return false;
+    }
+
+    private boolean invokeStaticThread(MethodInsnNode m) {
+        if (!"java/lang/Thread".equals(m.owner)) {
+            return false;
+        }
+        String key = m.name + m.desc;
+        if ("sleep(J)V".equals(key)) {
+            String v = popLong();
+            body.append("  call void @aot_thread_sleep(i64 ").append(v).append(")\n");
+            return true;
+        }
+        if ("yield()V".equals(key)) {
+            body.append("  call void @aot_thread_yield()\n");
+            return true;
+        }
+        if ("currentThread()Ljava/lang/Thread;".equals(key)) {
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_thread_rec_new()\n");
+            pushRef(r);
+            return true;
+        }
+        return false;
+    }
+
     private boolean invokeCollection(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
@@ -1840,6 +1941,9 @@ private String currentHandler() {
     private boolean invokeStaticJdk(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
+        if (invokeStaticThread(m)) {
+            return true;
+        }
         if ("java/lang/System".equals(owner)) {
             if ("nanoTime()J".equals(key)) {
                 String r = nv("v");
