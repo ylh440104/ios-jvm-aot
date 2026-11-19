@@ -96,6 +96,14 @@ public final class MethodTranslator {
         body.append("  store i32 0, ptr %sp\n");
         body.append("  %pc = alloca i32\n");
         body.append("  store i32 0, ptr %pc\n");
+        declares.add("declare void @gc_frame_push(ptr, ptr, i32, ptr, ptr)");
+        declares.add("declare void @gc_frame_pop(ptr)");
+        body.append("  %ret = alloca [2 x i64]\n");
+        body.append("  %frame = alloca [5 x i64]\n");
+        body.append("  %lptr = getelementptr [").append(localsSize).append(" x i64], ptr %locals, i64 0, i32 0\n");
+        body.append("  %sptr = getelementptr [").append(STACK_SLOTS).append(" x i64], ptr %stack, i64 0, i32 0\n");
+        body.append("  call void @gc_frame_push(ptr %frame, ptr %lptr, i32 ").append(localsSize)
+            .append(", ptr %sptr, ptr %sp)\n");
 
         int slot = 0;
         if (isInstance) {
@@ -143,7 +151,7 @@ public final class MethodTranslator {
         }
 
         if (!terminated) {
-            body.append("  ret ").append(retType).append(" ").append("i32".equals(retType) ? "0" : "0").append("\n");
+            emitReturn(retType, "0");
         }
         if (dispatchCode != null) {
             body.append(dispatchCode);
@@ -188,32 +196,32 @@ public final class MethodTranslator {
             case Opcodes.NOP -> {
             }
             case Opcodes.RETURN -> {
-                body.append("  ret i32 0\n");
+                emitReturn("i32", "0");
                 terminated = true;
             }
             case Opcodes.IRETURN -> {
                 String v = popInt();
-                body.append("  ret i32 ").append(v).append("\n");
+                emitReturn("i32", v);
                 terminated = true;
             }
             case Opcodes.LRETURN -> {
                 String v = popLong();
-                body.append("  ret i64 ").append(v).append("\n");
+                emitReturn("i64", v);
                 terminated = true;
             }
             case Opcodes.FRETURN -> {
                 String v = popFloat();
-                body.append("  ret float ").append(v).append("\n");
+                emitReturn("float", v);
                 terminated = true;
             }
             case Opcodes.DRETURN -> {
                 String v = popDouble();
-                body.append("  ret double ").append(v).append("\n");
+                emitReturn("double", v);
                 terminated = true;
             }
             case Opcodes.ARETURN -> {
                 String v = popRef();
-                body.append("  ret i64 ").append(v).append("\n");
+                emitReturn("i64", v);
                 terminated = true;
             }
             case Opcodes.ICONST_M1 -> pushIntLit(-1);
@@ -666,11 +674,25 @@ public final class MethodTranslator {
             terminated = true;
             return;
         }
-        body.append("  ret i32 0\n");
+        emitReturn(methodRetType(), "0");
         terminated = true;
     }
 
-    private String currentHandler() {
+    private String methodRetType() {
+        String k = TypeInfo.returnKind(mn.desc);
+        return "V".equals(k) ? "i32" : TypeInfo.llvm(k);
+    }
+
+    private void emitReturn(String type, String value) {
+        String slot = "%ret";
+        body.append("  store ").append(type).append(" ").append(value).append(", ptr ").append(slot).append("\n");
+        body.append("  call void @gc_frame_pop(ptr %frame)\n");
+        String v = nv("rv");
+        body.append("  ").append(v).append(" = load ").append(type).append(", ptr ").append(slot).append("\n");
+        body.append("  ret ").append(type).append(" ").append(v).append("\n");
+    }
+
+private String currentHandler() {
         return handlerDispatch;
     }
 
@@ -1020,10 +1042,10 @@ public final class MethodTranslator {
         if (!layout.hasClass(cls)) {
             fail("unknown class for new: " + cls);
         }
-        declares.add("declare ptr @calloc(i64, i64)");
+        declares.add("declare ptr @gc_calloc(i64, i64)");
         int size = layout.objectSize(cls);
         String raw = nv("np");
-        body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(size).append(", i64 1)\n");
+        body.append("  ").append(raw).append(" = call ptr @gc_calloc(i64 ").append(size).append(", i64 1)\n");
         body.append("  store ptr ").append(layout.vtableLabel(cls)).append(", ptr ").append(raw).append("\n");
         String tip = nv("np");
         body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");
@@ -1038,7 +1060,7 @@ public final class MethodTranslator {
 
     private void newArray(String elemKind, String typeDesc) {
         String cnt = popInt();
-        declares.add("declare ptr @calloc(i64, i64)");
+        declares.add("declare ptr @gc_calloc(i64, i64)");
         String neg = nv("an");
         body.append("  ").append(neg).append(" = icmp slt i32 ").append(cnt).append(", 0\n");
         String negBr = "ane" + (tmp++);
@@ -1056,7 +1078,7 @@ public final class MethodTranslator {
         String total = nv("ab");
         body.append("  ").append(total).append(" = add i64 ").append(bytes).append(", ").append(ARRAY_DATA_OFFSET).append("\n");
         String raw = nv("ap");
-        body.append("  ").append(raw).append(" = call ptr @calloc(i64 ").append(total).append(", i64 1)\n");
+        body.append("  ").append(raw).append(" = call ptr @gc_calloc(i64 ").append(total).append(", i64 1)\n");
         body.append("  store ptr @.vt_empty, ptr ").append(raw).append("\n");
         String tidp = nv("ap");
         body.append("  ").append(tidp).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");
@@ -1125,9 +1147,9 @@ public final class MethodTranslator {
     }
 
     private void throwBuiltin(String cls) {
-        declares.add("declare ptr @calloc(i64, i64)");
+        declares.add("declare ptr @gc_calloc(i64, i64)");
         String raw = nv("te");
-        body.append("  ").append(raw).append(" = call ptr @calloc(i64 16, i64 1)\n");
+        body.append("  ").append(raw).append(" = call ptr @gc_calloc(i64 16, i64 1)\n");
         body.append("  store ptr @.vt_empty, ptr ").append(raw).append("\n");
         String tp = nv("te");
         body.append("  ").append(tp).append(" = getelementptr i8, ptr ").append(raw).append(", i32 8\n");

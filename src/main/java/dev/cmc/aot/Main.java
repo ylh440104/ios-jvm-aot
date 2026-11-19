@@ -66,11 +66,18 @@ public final class Main {
         ir.append(layout.renderStatics());
         ir.append(layout.renderTypeTables());
         ir.append("@.pending_exc = global i64 0\n");
+        ir.append("@gc_roots = global ptr null\n");
+        ir.append("@gc_root_count = global i64 0\n");
+        ir.append(layout.renderRootTable());
+        declares.add("declare void @gc_init(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
         ir.append('\n').append(funcs);
         ir.append("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        ir.append("  call void @gc_init(i64 268435456)\n");
+        ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
+        ir.append("  store i64 ").append(layout.rootCount()).append(", ptr @gc_root_count\n");
         for (ClassInfo c : classes) {
             MethodNode cl = c.findMethod("<clinit>", "()V");
             if (cl != null) {

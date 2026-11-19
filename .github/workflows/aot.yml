@@ -44,43 +44,43 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry RangeTest -o build/rg.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry EdgeTest -o build/eg.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry CheckTest -o build/ck.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry GcTest -o build/gc.ll
 
       - name: Verify IR is well formed
         run: |
-          llvm-as build/hello.ll -o build/hello.bc
-          llvm-as build/obj.ll -o build/obj.bc
-          llvm-as build/arr.ll -o build/arr.bc
-          llvm-as build/st.ll -o build/st.bc
-          llvm-as build/rf.ll -o build/rf.bc
-          llvm-as build/num.ll -o build/num.bc
-          llvm-as build/ty.ll -o build/ty.bc
-          llvm-as build/ec.ll -o build/ec.bc
-          llvm-as build/rg.ll -o build/rg.bc
-          llvm-as build/eg.ll -o build/eg.bc
-          llvm-as build/ck.ll -o build/ck.bc
+          for f in build/*.ll; do
+            llvm-as "$f" -o /dev/null
+          done
           echo IR_VERIFY_OK
 
       - name: Execute IR and diff against JVM
         run: |
           set -e
-          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck; do
+          for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc; do
             name="${t%%:*}"
             tag="${t##*:}"
-            lli "build/$tag.bc" > "build/$tag.txt"
+            clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0"
+            "./build/$tag-o0" > "build/$tag-o0.txt"
             ( cd build/classes && java "$name" ) > "build/$tag.golden"
-            echo "--- $name ---"
-            diff "build/$tag.golden" "build/$tag.txt" && echo "${name}_OK"
+            echo "--- $name O0 ---"
+            diff "build/$tag.golden" "build/$tag-o0.txt" && echo "${name}_O0_OK"
+            clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1"
+            "./build/$tag-o1" > "build/$tag-o1.txt"
+            echo "--- $name O1 ---"
+            diff "build/$tag.golden" "build/$tag-o1.txt" && echo "${name}_O1_OK"
           done
           echo ALL_SEMANTICS_OK
 
-      - name: Compile with clang
+      - name: Verify garbage collector reclaims
         run: |
-          for t in hello obj arr st rf num ty ec rg eg ck; do
-            clang -O0 build/$t.ll -o build/$t-o0-bin
-            ./build/$t-o0-bin
-            clang -O1 build/$t.ll -o build/$t-bin
-            ./build/$t-bin
-          done
+          set -e
+          ./build/gc-o1 > build/gc-out.txt
+          printf '9000000\n2500\n2501\n958800\n4112\n19901\n' > build/gc-expect.txt
+          diff build/gc-expect.txt build/gc-out.txt && echo GC_SEMANTICS_OK
+          clang -O0 testdata/gc_probe.ll src/main/c/runtime.c -o build/gc-probe
+          ./build/gc-probe > build/gc-probe-out.txt
+          printf 'live=0\nafter=3120\nafter=0\n' > build/gc-probe-expect.txt
+          diff build/gc-probe-expect.txt build/gc-probe-out.txt && echo GC_RECLAIM_OK
 
   ios:
     if: github.event_name == 'workflow_dispatch'
