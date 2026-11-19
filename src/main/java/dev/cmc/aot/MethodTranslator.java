@@ -2480,11 +2480,74 @@ String objv = popRef();
             pushFloat(fv);
             return true;
         }
+        if ("getDeclaredField(Ljava/lang/String;)Ljava/lang/reflect/Field;".equals(key)) {
+            String nm = popRef();
+            String self = popRef();
+            declares.add("declare i32 @aot_class_id(i64)");
+            declares.add("declare i64 @aot_field_lookup(i32, i64)");
+            String cid = nv("v");
+            body.append("  ").append(cid).append(" = call i32 @aot_class_id(i64 ").append(self).append(")\n");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_field_lookup(i32 ").append(cid)
+                .append(", i64 ").append(nm).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("get(Ljava/lang/Object;)Ljava/lang/Object;".equals(key)) {
+            String target = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_field_get_boxed(i64, i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_field_get_boxed(i64 ").append(self)
+                .append(", i64 ").append(target).append(")\n");
+            pushRef(r);
+            return true;
+        }
+        if ("set(Ljava/lang/Object;Ljava/lang/Object;)V".equals(key)) {
+            String val = popRef();
+            String target = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_field_set(i64, i64, i64)");
+            body.append("  call i64 @aot_field_set(i64 ").append(self).append(", i64 ").append(target)
+                .append(", i64 ").append(val).append(")\n");
+            return true;
+        }
+        if ("setInt(Ljava/lang/Object;I)V".equals(key)) {
+            String val = popInt();
+            String target = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_field_set(i64, i64, i64)");
+            String v64 = nv("v");
+            body.append("  ").append(v64).append(" = sext i32 ").append(val).append(" to i64\n");
+            body.append("  call i64 @aot_field_set(i64 ").append(self).append(", i64 ").append(target)
+                .append(", i64 ").append(v64).append(")\n");
+            return true;
+        }
+        if ("getInt(Ljava/lang/Object;)I".equals(key)) {
+            String target = popRef();
+            String self = popRef();
+            declares.add("declare i64 @aot_field_get(i64, i64)");
+            String r = nv("v");
+            body.append("  ").append(r).append(" = call i64 @aot_field_get(i64 ").append(self)
+                .append(", i64 ").append(target).append(")\n");
+            String i32v = nv("v");
+            body.append("  ").append(i32v).append(" = trunc i64 ").append(r).append(" to i32\n");
+            pushInt(i32v);
+            return true;
+        }
         if ("getName()Ljava/lang/String;".equals(key)) {
             String self = popRef();
             declares.add("declare i64 @aot_class_get_name(i64)");
+            declares.add("declare i64 @aot_field_name(i64)");
+            declares.add("declare i64 @aot_method_name(i64)");
             String r = nv("v");
-            body.append("  ").append(r).append(" = call i64 @aot_class_get_name(i64 ").append(self).append(")\n");
+            if ("java/lang/reflect/Field".equals(m.owner)) {
+                body.append("  ").append(r).append(" = call i64 @aot_field_name(i64 ").append(self).append(")\n");
+            } else if ("java/lang/reflect/Method".equals(m.owner)) {
+                body.append("  ").append(r).append(" = call i64 @aot_method_name(i64 ").append(self).append(")\n");
+            } else {
+                body.append("  ").append(r).append(" = call i64 @aot_class_get_name(i64 ").append(self).append(")\n");
+            }
             pushRef(r);
             return true;
         }

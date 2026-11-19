@@ -495,4 +495,57 @@ public final class Layout {
         }
         return sb.toString();
     }
+
+    public static final class FieldMeta {
+        public final String owner;
+        public final String name;
+        public final String desc;
+        public final int offset;
+        public final boolean isStatic;
+
+        FieldMeta(String owner, String name, String desc, int offset, boolean isStatic) {
+            this.owner = owner;
+            this.name = name;
+            this.desc = desc;
+            this.offset = offset;
+            this.isStatic = isStatic;
+        }
+    }
+
+    public List<FieldMeta> fieldMetas() {
+        List<FieldMeta> out = new ArrayList<>();
+        for (ClassInfo c : classes.values()) {
+            List<String> chain = fieldChain(c.name());
+            java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+            for (int i = chain.size() - 1; i >= 0; i--) {
+                ClassInfo owner = classes.get(chain.get(i));
+                if (owner == null) {
+                    continue;
+                }
+                for (FieldInfo f : owner.fields()) {
+                    if (!seen.add(f.name())) {
+                        continue;
+                    }
+                    String key = owner.name() + "#" + f.name();
+                    Integer off = fieldOffsets.get(key);
+                    out.add(new FieldMeta(c.name(), f.name(), f.desc(),
+                        off == null ? -1 : off, f.isStatic()));
+                }
+            }
+        }
+        return out;
+    }
+
+    public static int kindCode(String desc) {
+        char c = desc.charAt(0);
+        return switch (c) {
+            case 'Z', 'B' -> 1;
+            case 'S' -> 2;
+            case 'C', 'I' -> 3;
+            case 'F' -> 4;
+            case 'J' -> 6;
+            case 'D' -> 7;
+            default -> 5;
+        };
+    }
 }

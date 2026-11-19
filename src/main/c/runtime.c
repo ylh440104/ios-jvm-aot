@@ -517,6 +517,171 @@ int64_t aot_class_for_name(int64_t name)
     return 0;
 }
 
+int32_t aot_field_type_id;
+int32_t aot_method_type_id;
+
+void aot_set_field_type(int32_t type_id)
+{
+    aot_field_type_id = type_id;
+}
+
+void aot_set_method_type(int32_t type_id)
+{
+    aot_method_type_id = type_id;
+}
+
+int64_t aot_field_new(int32_t owner_tid, int32_t offset, int32_t kind, int64_t name, int32_t is_static)
+{
+    void *obj = gc_alloc(40);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_field_type_id;
+    *(int32_t *)((char *)obj + 12) = owner_tid;
+    *(int32_t *)((char *)obj + 16) = offset;
+    *(int32_t *)((char *)obj + 20) = kind;
+    *(int32_t *)((char *)obj + 24) = is_static;
+    *(int64_t *)((char *)obj + 32) = name;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_method_new(int32_t owner_tid, int32_t slot, int64_t name)
+{
+    void *obj = gc_alloc(32);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_method_type_id;
+    *(int32_t *)((char *)obj + 12) = owner_tid;
+    *(int32_t *)((char *)obj + 16) = slot;
+    *(int64_t *)((char *)obj + 24) = name;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_field_get(int64_t field, int64_t target)
+{
+    if (field == 0) {
+        return 0;
+    }
+    int32_t offset = *(int32_t *)((char *)(intptr_t)field + 16);
+    int32_t kind = *(int32_t *)((char *)(intptr_t)field + 20);
+    int32_t is_static = *(int32_t *)((char *)(intptr_t)field + 24);
+    int64_t base = is_static ? 0 : target;
+    if (base == 0) {
+        return 0;
+    }
+    char *p = (char *)(intptr_t)base + offset;
+    if (kind == 1 || kind == 2 || kind == 3) {
+        return (int64_t)*(int32_t *)p;
+    }
+    if (kind == 4) {
+        float f = *(float *)p;
+        int32_t bits;
+        memcpy(&bits, &f, sizeof(float));
+        return (int64_t)bits;
+    }
+    return *(int64_t *)p;
+}
+
+int64_t aot_field_set(int64_t field, int64_t target, int64_t value)
+{
+    if (field == 0) {
+        return 0;
+    }
+    int32_t offset = *(int32_t *)((char *)(intptr_t)field + 16);
+    int32_t kind = *(int32_t *)((char *)(intptr_t)field + 20);
+    int32_t is_static = *(int32_t *)((char *)(intptr_t)field + 24);
+    int64_t base = is_static ? 0 : target;
+    if (base == 0) {
+        return 0;
+    }
+    char *p = (char *)(intptr_t)base + offset;
+    if (kind == 1 || kind == 2 || kind == 3) {
+        *(int32_t *)p = (int32_t)value;
+        return value;
+    }
+    if (kind == 4) {
+        int32_t bits = (int32_t)value;
+        float f;
+        memcpy(&f, &bits, sizeof(float));
+        *(float *)p = f;
+        return value;
+    }
+    *(int64_t *)p = value;
+    return value;
+}
+
+int64_t aot_long_box_new(int64_t v);
+int64_t aot_box_new(int32_t v);
+
+int64_t aot_field_get_boxed(int64_t field, int64_t target)
+{
+    int64_t raw = aot_field_get(field, target);
+    if (field == 0) {
+        return 0;
+    }
+    int32_t kind = *(int32_t *)((char *)(intptr_t)field + 20);
+    if (kind == 5) {
+        return raw;
+    }
+    if (kind == 6) {
+        return aot_long_box_new(raw);
+    }
+    return aot_box_new((int32_t)raw);
+}
+
+int64_t aot_field_name(int64_t field)
+{
+    if (field == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)field + 32);
+}
+
+int64_t aot_method_name(int64_t method)
+{
+    if (method == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)method + 24);
+}
+
+typedef struct {
+    int64_t owner_tid;
+    int64_t offset;
+    int64_t kind;
+    int64_t is_static;
+    int64_t name;
+} field_meta_rec;
+
+static field_meta_rec *field_meta_table;
+static int32_t field_meta_count;
+
+void aot_set_field_meta_table(int64_t *data, int32_t count)
+{
+    field_meta_table = (field_meta_rec *)(intptr_t)data;
+    field_meta_count = count;
+}
+
+int64_t aot_field_lookup(int32_t owner_tid, int64_t name)
+{
+    if (name == 0 || field_meta_table == 0) {
+        return 0;
+    }
+    for (int32_t i = 0; i < field_meta_count; i++) {
+        field_meta_rec *m = &field_meta_table[i];
+        if ((int32_t)m->owner_tid != owner_tid) {
+            continue;
+        }
+        if (m->name != 0 && aot_str_equals(m->name, name)) {
+            return aot_field_new(owner_tid, (int32_t)m->offset, (int32_t)m->kind, m->name, (int32_t)m->is_static);
+        }
+    }
+    return 0;
+}
+
 void aot_set_string_type(int32_t type_id)
 {
     aot_string_type_id = type_id;
