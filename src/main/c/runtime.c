@@ -5,6 +5,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <sched.h>
+#include <dlfcn.h>
 
 #define GC_MAGIC 0x47434F424A4C4CULL
 #define GC_HEADER 16
@@ -3392,4 +3393,264 @@ int64_t aot_str_format(int64_t fmt, int64_t args)
     aot_string *o = fmt_str();
     o->length = fmt_len;
     return fmt_buf;
+}
+
+typedef struct { void *handle; } ffi_lib;
+
+typedef struct {
+    int64_t user_ptr;
+    int64_t size;
+    char *base;
+} direct_buf;
+
+int64_t aot_ffi_open(int64_t path)
+{
+    if (path == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)path;
+    const uint16_t *cs = (const uint16_t *)(intptr_t)s->chars;
+    char name[1024];
+    int32_t n = s->length < 1000 ? s->length : 1000;
+    for (int32_t i = 0; i < n; i++) {
+        name[i] = (char)cs[i];
+    }
+    name[n] = 0;
+    ffi_lib *lib = (ffi_lib *)malloc(sizeof(ffi_lib));
+    if (!lib) {
+        return 0;
+    }
+    lib->handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+    if (!lib->handle) {
+        free(lib);
+        return 0;
+    }
+    return (int64_t)(intptr_t)lib;
+}
+
+int64_t aot_ffi_sym(int64_t libh, int64_t name)
+{
+    if (libh == 0 || name == 0) {
+        return 0;
+    }
+    ffi_lib *lib = (ffi_lib *)(intptr_t)libh;
+    aot_string *s = (aot_string *)(intptr_t)name;
+    const uint16_t *cs = (const uint16_t *)(intptr_t)s->chars;
+    char nm[1024];
+    int32_t n = s->length < 1000 ? s->length : 1000;
+    for (int32_t i = 0; i < n; i++) {
+        nm[i] = (char)cs[i];
+    }
+    nm[n] = 0;
+    void *p = dlsym(lib->handle, nm);
+    return (int64_t)(intptr_t)p;
+}
+
+int64_t aot_ffi_call0(int64_t fn)
+{
+    int64_t (*f)(void) = (int64_t (*)(void))(intptr_t)fn;
+    return f();
+}
+
+int64_t aot_ffi_call1(int64_t fn, int64_t a)
+{
+    int64_t (*f)(int64_t) = (int64_t (*)(int64_t))(intptr_t)fn;
+    return f(a);
+}
+
+int64_t aot_ffi_call2(int64_t fn, int64_t a, int64_t b)
+{
+    int64_t (*f)(int64_t, int64_t) = (int64_t (*)(int64_t, int64_t))(intptr_t)fn;
+    return f(a, b);
+}
+
+int64_t aot_ffi_call3(int64_t fn, int64_t a, int64_t b, int64_t c)
+{
+    int64_t (*f)(int64_t, int64_t, int64_t) = (int64_t (*)(int64_t, int64_t, int64_t))(intptr_t)fn;
+    return f(a, b, c);
+}
+
+int64_t aot_ffi_call4(int64_t fn, int64_t a, int64_t b, int64_t c, int64_t d)
+{
+    int64_t (*f)(int64_t, int64_t, int64_t, int64_t) = (int64_t (*)(int64_t, int64_t, int64_t, int64_t))(intptr_t)fn;
+    return f(a, b, c, d);
+}
+
+int64_t aot_ffi_call5(int64_t fn, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e)
+{
+    int64_t (*f)(int64_t, int64_t, int64_t, int64_t, int64_t) = (int64_t (*)(int64_t, int64_t, int64_t, int64_t, int64_t))(intptr_t)fn;
+    return f(a, b, c, d, e);
+}
+
+int64_t aot_ffi_call6(int64_t fn, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t g)
+{
+    int64_t (*f)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t) = (int64_t (*)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t))(intptr_t)fn;
+    return f(a, b, c, d, e, g);
+}
+
+int64_t aot_mem_alloc(int64_t size)
+{
+    if (size <= 0) {
+        return 0;
+    }
+    direct_buf *b = (direct_buf *)malloc(sizeof(direct_buf));
+    if (!b) {
+        return 0;
+    }
+    b->base = (char *)calloc((size_t)size, 1);
+    if (!b->base) {
+        free(b);
+        return 0;
+    }
+    b->size = size;
+    b->user_ptr = (int64_t)(intptr_t)b->base;
+    return (int64_t)(intptr_t)b;
+}
+
+int64_t aot_mem_addr(int64_t h)
+{
+    if (h == 0) {
+        return 0;
+    }
+    return ((direct_buf *)(intptr_t)h)->user_ptr;
+}
+
+int64_t aot_mem_size(int64_t h)
+{
+    if (h == 0) {
+        return 0;
+    }
+    return ((direct_buf *)(intptr_t)h)->size;
+}
+
+void aot_mem_free(int64_t h)
+{
+    if (h == 0) {
+        return;
+    }
+    direct_buf *b = (direct_buf *)(intptr_t)h;
+    free(b->base);
+    free(b);
+}
+
+void aot_mem_put8(int64_t h, int64_t off, int64_t v)
+{
+    if (h == 0 || off < 0) {
+        return;
+    }
+    direct_buf *b = (direct_buf *)(intptr_t)h;
+    if (off + 8 > b->size) {
+        return;
+    }
+    int64_t *p = (int64_t *)(b->base + off);
+    *p = v;
+}
+
+void aot_mem_put4(int64_t h, int64_t off, int32_t v)
+{
+    if (h == 0 || off < 0) {
+        return;
+    }
+    direct_buf *b = (direct_buf *)(intptr_t)h;
+    if (off + 4 > b->size) {
+        return;
+    }
+    int32_t *p = (int32_t *)(b->base + off);
+    *p = v;
+}
+
+int64_t aot_mem_get8(int64_t h, int64_t off)
+{
+    if (h == 0 || off < 0) {
+        return 0;
+    }
+    direct_buf *b = (direct_buf *)(intptr_t)h;
+    if (off + 8 > b->size) {
+        return 0;
+    }
+    return *(int64_t *)(b->base + off);
+}
+
+int32_t aot_mem_get4(int64_t h, int64_t off)
+{
+    if (h == 0 || off < 0) {
+        return 0;
+    }
+    direct_buf *b = (direct_buf *)(intptr_t)h;
+    if (off + 4 > b->size) {
+        return 0;
+    }
+    return *(int32_t *)(b->base + off);
+}
+
+int32_t aot_addr_get4(int64_t addr, int64_t off)
+{
+    if (addr == 0 || off < 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)addr + off);
+}
+
+int64_t aot_addr_get8(int64_t addr, int64_t off)
+{
+    if (addr == 0 || off < 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)addr + off);
+}
+
+void aot_addr_put4(int64_t addr, int64_t off, int32_t v)
+{
+    if (addr == 0 || off < 0) {
+        return;
+    }
+    *(int32_t *)((char *)(intptr_t)addr + off) = v;
+}
+
+void aot_addr_put8(int64_t addr, int64_t off, int64_t v)
+{
+    if (addr == 0 || off < 0) {
+        return;
+    }
+    *(int64_t *)((char *)(intptr_t)addr + off) = v;
+}
+
+void aot_mem_copy(int64_t dst_addr, int64_t src_addr, int64_t n)
+{
+    if (dst_addr == 0 || src_addr == 0 || n <= 0) {
+        return;
+    }
+    memcpy((void *)(intptr_t)dst_addr, (void *)(intptr_t)src_addr, (size_t)n);
+}
+
+void aot_addr_put8_at(int64_t addr, int64_t v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(int64_t *)(intptr_t)addr = v;
+}
+
+void aot_addr_put4_at(int64_t addr, int32_t v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(int32_t *)(intptr_t)addr = v;
+}
+
+int64_t aot_addr_get8_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0;
+    }
+    return *(int64_t *)(intptr_t)addr;
+}
+
+int32_t aot_addr_get4_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0;
+    }
+    return *(int32_t *)(intptr_t)addr;
 }

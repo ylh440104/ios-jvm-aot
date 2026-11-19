@@ -28,7 +28,7 @@ jobs:
       - name: Compile test classes
         run: |
           mkdir -p build/classes
-          javac -d build/classes testdata/*.java
+          javac -d build/classes $(find testdata -name '*.java')
           javap -v -cp build/classes Hello | grep -E 'major|minor'
 
       - name: Emit LLVM IR
@@ -67,6 +67,8 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Wait1 -o build/wt1.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Wait2 -o build/wt2.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Type1 -o build/ty1.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Mem1 -o build/fn-Mem1.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Ffi2 -o build/fn-Ffi2.ll
 
       - name: Verify IR is well formed
         run: |
@@ -81,7 +83,7 @@ jobs:
           for t in Hello:hello ObjTest:obj ArraysTest:arr StaticsTest:st RefsTest:rf NumericTest:num TypesTest:ty ExcTest:ec RangeTest:rg EdgeTest:eg CheckTest:ck GcTest:gc StrTest:sr SbTest:sb CollTest:cl ThreadTest:th ThreadGc:tg IndyTest:iy LambdaTest:lm ReflectTest:rc Reflect2:rd Reflect3:re Reflect5:rh Reflect6:ri Reflect8:rj Reflect9:rk Reflect10:rl Reflect11:rm Str2:s2 Arr6:ar6 Fmt1:f1 Wait1:wt1 Wait2:wt2 Type1:ty1; do
             name="${t%%:*}"
             tag="${t##*:}"
-            clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread
+            clang -O0 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o0" -lpthread -ldl
             set +e
             "./build/$tag-o0" > "build/$tag-o0.txt"
             rc0=$?
@@ -93,7 +95,7 @@ jobs:
             ( cd build/classes && java "$name" ) > "build/$tag.golden"
             echo "--- $name O0 ---"
             diff "build/$tag.golden" "build/$tag-o0.txt" && echo "${name}_O0_OK"
-            clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1" -lpthread
+            clang -O1 "build/$tag.ll" src/main/c/runtime.c -o "build/$tag-o1" -lpthread -ldl
             set +e
             "./build/$tag-o1" > "build/$tag-o1.txt"
             rc1=$?
@@ -113,10 +115,25 @@ jobs:
           ./build/gc-o1 > build/gc-out.txt
           printf '9000000\n2500\n2501\n958800\n4112\n19901\n' > build/gc-expect.txt
           diff build/gc-expect.txt build/gc-out.txt && echo GC_SEMANTICS_OK
-          clang -O0 testdata/gc_probe.ll src/main/c/runtime.c -o build/gc-probe -lpthread
+          clang -O0 testdata/gc_probe.ll src/main/c/runtime.c -o build/gc-probe -lpthread -ldl
           ./build/gc-probe > build/gc-probe-out.txt
           printf 'live=0\nafter=3120\nafter=0\n' > build/gc-probe-expect.txt
           diff build/gc-probe-expect.txt build/gc-probe-out.txt && echo GC_RECLAIM_OK
+
+      - name: Verify native interop
+        run: |
+          set -e
+          for t in Mem1 Ffi2; do
+            clang -O0 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o0" -lpthread -ldl
+            "./build/fn-$t-o0" > "build/fn-$t-out.txt"
+            clang -O1 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o1" -lpthread -ldl
+            "./build/fn-$t-o1" > "build/fn-$t-out1.txt"
+            diff "build/fn-$t-out.txt" "build/fn-$t-out1.txt" && echo "${t}_STABLE"
+          done
+          printf '1\n32\n1\n1234567890\n42\n-7\n65535\ndone\n' > build/fn-mem-expect.txt
+          diff build/fn-mem-expect.txt build/fn-Mem1-out.txt && echo MEM_OK
+          printf '1\n1\n1\n123\n456\n1\n0\n' > build/fn-ffi-expect.txt
+          diff build/fn-ffi-expect.txt build/fn-Ffi2-out.txt && echo FFI_OK
 
   ios:
     if: github.event_name == 'workflow_dispatch'
@@ -136,7 +153,7 @@ jobs:
       - name: Compile test classes
         run: |
           mkdir -p build/classes
-          javac -d build/classes testdata/*.java
+          javac -d build/classes $(find testdata -name '*.java')
 
       - name: Emit LLVM IR
         run: java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/out.ll

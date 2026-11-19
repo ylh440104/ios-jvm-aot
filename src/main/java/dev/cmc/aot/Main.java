@@ -209,6 +209,7 @@ public final class Main {
         declares.add("declare i64 @aot_class_get_superclass(i32)");
         declares.add("declare i32 @aot_class_is_assignable_from(i32, i32)");
         declares.add("declare i32 @aot_class_is_interface(i32)");
+        declares.add("declare ptr @gc_calloc(i64, i64)");
         declares.add("declare i64 @aot_str_split(i64, i64)");
         declares.add("declare i64 @aot_str_to_char_array(i64)");
         declares.add("declare i64 @aot_str_repeat(i64, i32)");

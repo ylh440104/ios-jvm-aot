@@ -2163,9 +2163,64 @@ String objv = popRef();
         return false;
     }
 
+    private boolean invokeFfi(String owner, MethodInsnNode m) {
+        FfiSupport.Bind b = FfiSupport.lookup(owner, m.name, m.desc);
+        if (b == null) {
+            return false;
+        }
+        int want = b.args.length;
+        String[] raw = new String[want];
+        for (int i = want - 1; i >= 0; i--) {
+            String k = b.args[i];
+            raw[i] = "i32".equals(k) ? popInt() : popRef();
+        }
+        declares.add("declare " + retLlvmOf(b.ret) + " @" + b.cName + "(" + sigOf(b.args) + ")");
+        StringBuilder callArgs = new StringBuilder();
+        for (int i = 0; i < want; i++) {
+            if (i > 0) {
+                callArgs.append(", ");
+            }
+            callArgs.append("i32".equals(b.args[i]) ? "i32" : "i64").append(" ").append(raw[i]);
+        }
+        if (b.ret == null) {
+            body.append("  call void @").append(b.cName).append("(").append(callArgs).append(")\n");
+            return true;
+        }
+        String r = nv("v");
+        body.append("  ").append(r).append(" = call ").append(retLlvmOf(b.ret))
+            .append(" @").append(b.cName).append("(").append(callArgs).append(")\n");
+        if ("i32".equals(b.ret)) {
+            pushInt(r);
+        } else {
+            pushRef(r);
+        }
+        return true;
+    }
+
+    private static String retLlvmOf(String ret) {
+        if (ret == null) {
+            return "void";
+        }
+        return ret;
+    }
+
+    private static String sigOf(String[] args) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append("i32".equals(args[i]) ? "i32" : "i64");
+        }
+        return sb.toString();
+    }
+
     private boolean invokeStaticJdk(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
+        if (invokeFfi(owner, m)) {
+            return true;
+        }
         if (invokeStaticThread(m)) {
             return true;
         }
