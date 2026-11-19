@@ -53,7 +53,7 @@ public final class Main {
                 if ("main".equals(mn.name) && "([Ljava/lang/String;)V".equals(mn.desc) && ClassParser.isStatic(mn)) {
                     if (entryClass == null || entryClass.equals(c.name())) {
                         entry = ClassParser.mangle(c.name(), mn.name, mn.desc);
-                        entryArgs = TypeUtil.argKinds(mn.desc);
+                        entryArgs = TypeInfo.argKinds(mn.desc);
                     }
                 }
             }

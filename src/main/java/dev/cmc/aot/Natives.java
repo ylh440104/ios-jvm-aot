@@ -24,9 +24,16 @@ public final class Natives {
     static {
         register("java/io/PrintStream", "println", "(Ljava/lang/String;)V", "print_str", 1, false, true);
         register("java/io/PrintStream", "println", "(I)V", "print_int", 1, false, false);
+        register("java/io/PrintStream", "println", "(J)V", "print_long", 1, false, false);
+        register("java/io/PrintStream", "println", "(D)V", "print_double", 1, false, false);
+        register("java/io/PrintStream", "println", "(F)V", "print_float", 1, false, false);
+        register("java/io/PrintStream", "println", "(Z)V", "print_bool", 1, false, false);
         register("java/io/PrintStream", "println", "()V", "print_nl", 0, false, false);
         register("java/io/PrintStream", "print", "(Ljava/lang/String;)V", "print_str_raw", 1, false, true);
         register("java/io/PrintStream", "print", "(I)V", "print_int_raw", 1, false, false);
+        register("java/io/PrintStream", "print", "(J)V", "print_long_raw", 1, false, false);
+        register("java/io/PrintStream", "print", "(D)V", "print_double_raw", 1, false, false);
+        register("java/io/PrintStream", "print", "(F)V", "print_float_raw", 1, false, false);
         register("java/lang/Math", "abs", "(I)I", "math_abs", 1, true, false);
         register("java/lang/Math", "max", "(II)I", "math_max", 2, true, false);
         register("java/lang/Math", "min", "(II)I", "math_min", 2, true, false);
