@@ -413,6 +413,8 @@ void *aot_string_vtable;
 int64_t aot_object_type_id;
 int32_t aot_integer_type_id;
 int32_t aot_long_type_id;
+int32_t aot_char_array_type_id;
+int32_t aot_string_array_type_id;
 int32_t aot_class_type_id;
 int32_t aot_str_equals(int64_t a, int64_t b);
 int64_t aot_str_substring(int64_t s, int32_t from, int32_t to);
@@ -962,6 +964,16 @@ int64_t aot_ctor_desc_of(int64_t arr)
     return aot_str_from_utf8((int64_t)(intptr_t)buf, p);
 }
 
+void aot_set_char_array_type(int32_t type_id)
+{
+    aot_char_array_type_id = type_id;
+}
+
+void aot_set_string_array_type(int32_t type_id)
+{
+    aot_string_array_type_id = type_id;
+}
+
 void aot_set_string_type(int32_t type_id)
 {
     aot_string_type_id = type_id;
@@ -1227,6 +1239,181 @@ void aot_str_print(int64_t s)
             putchar(0x80 | (ch & 0x3F));
         }
     }
+}
+
+int32_t aot_str_region_equals(int64_t a, int32_t afrom, int64_t b, int32_t bfrom, int32_t len)
+{
+    if (a == 0 || b == 0) {
+        return a == b ? 1 : 0;
+    }
+    aot_string *x = (aot_string *)(intptr_t)a;
+    aot_string *y = (aot_string *)(intptr_t)b;
+    if (afrom < 0 || bfrom < 0 || len < 0) {
+        return 0;
+    }
+    if (afrom + len > x->length || bfrom + len > y->length) {
+        return 0;
+    }
+    const uint16_t *cx = (const uint16_t *)(intptr_t)x->chars;
+    const uint16_t *cy = (const uint16_t *)(intptr_t)y->chars;
+    for (int32_t i = 0; i < len; i++) {
+        if (cx[afrom + i] != cy[bfrom + i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int64_t aot_str_to_char_array(int64_t s)
+{
+    int32_t n = aot_str_length(s);
+    void *arr = gc_alloc(24 + (int64_t)n * 8);
+    if (!arr) {
+        return 0;
+    }
+    *(void **)(char *)arr = 0;
+    *(int32_t *)((char *)arr + 8) = aot_char_array_type_id;
+    *(int32_t *)((char *)arr + 16) = n;
+    int64_t *data = (int64_t *)((char *)arr + 24);
+    if (s != 0) {
+        aot_string *str = (aot_string *)(intptr_t)s;
+        const uint16_t *cs = (const uint16_t *)(intptr_t)str->chars;
+        for (int32_t i = 0; i < n; i++) {
+            data[i] = (int64_t)cs[i];
+        }
+    }
+    return (int64_t)(intptr_t)arr;
+}
+
+int64_t aot_str_repeat(int64_t s, int32_t times)
+{
+    if (times <= 0 || s == 0) {
+        return str_alloc(0);
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    int64_t total = (int64_t)str->length * times;
+    if (total > 0x7FFFFFFF) {
+        return 0;
+    }
+    int64_t out = str_alloc((int32_t)total);
+    if (out == 0) {
+        return 0;
+    }
+    aot_string *o = (aot_string *)(intptr_t)out;
+    const uint16_t *src = (const uint16_t *)(intptr_t)str->chars;
+    uint16_t *dst = (uint16_t *)(intptr_t)o->chars;
+    int32_t p = 0;
+    for (int32_t t = 0; t < times; t++) {
+        for (int32_t i = 0; i < str->length; i++) {
+            dst[p++] = src[i];
+        }
+    }
+    return out;
+}
+
+static int32_t str_is_space(uint16_t c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0B || c == 0x0C;
+}
+
+int64_t aot_str_strip(int64_t s)
+{
+    int32_t n = aot_str_length(s);
+    if (n == 0) {
+        return str_alloc(0);
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    const uint16_t *cs = (const uint16_t *)(intptr_t)str->chars;
+    int32_t lo = 0;
+    int32_t hi = n;
+    while (lo < hi && str_is_space(cs[lo])) {
+        lo++;
+    }
+    while (hi > lo && str_is_space(cs[hi - 1])) {
+        hi--;
+    }
+    if (lo == 0 && hi == n) {
+        return s;
+    }
+    return aot_str_substring(s, lo, hi);
+}
+
+int64_t aot_str_split(int64_t s, int64_t sep)
+{
+    int32_t n = aot_str_length(s);
+    int32_t sl = aot_str_length(sep);
+    if (sl == 0) {
+        void *arr = gc_alloc(24 + (int64_t)n * 8);
+        if (!arr) {
+            return 0;
+        }
+        *(void **)(char *)arr = 0;
+        *(int32_t *)((char *)arr + 8) = aot_string_array_type_id;
+        *(int32_t *)((char *)arr + 16) = n;
+        int64_t *data = (int64_t *)((char *)arr + 24);
+        aot_string *str = (aot_string *)(intptr_t)s;
+        const uint16_t *cs = (const uint16_t *)(intptr_t)str->chars;
+        for (int32_t i = 0; i < n; i++) {
+            int64_t one = str_alloc(1);
+            ((uint16_t *)(intptr_t)((aot_string *)(intptr_t)one)->chars)[0] = cs[i];
+            data[i] = one;
+        }
+        return (int64_t)(intptr_t)arr;
+    }
+    aot_string *str = (aot_string *)(intptr_t)s;
+    aot_string *sp2 = (aot_string *)(intptr_t)sep;
+    const uint16_t *cs = (const uint16_t *)(intptr_t)str->chars;
+    const uint16_t *sp = (const uint16_t *)(intptr_t)sp2->chars;
+    int32_t count = 1;
+    int32_t i = 0;
+    while (i + sl <= n) {
+        int32_t hit = 1;
+        for (int32_t j = 0; j < sl; j++) {
+            if (cs[i + j] != sp[j]) {
+                hit = 0;
+                break;
+            }
+        }
+        if (hit) {
+            count++;
+            i += sl;
+        } else {
+            i++;
+        }
+    }
+    void *arr = gc_alloc(24 + (int64_t)count * 8);
+    if (!arr) {
+        return 0;
+    }
+    *(void **)(char *)arr = 0;
+    *(int32_t *)((char *)arr + 8) = aot_string_array_type_id;
+    *(int32_t *)((char *)arr + 16) = count;
+    int64_t *data = (int64_t *)((char *)arr + 24);
+    int32_t k = 0;
+    int32_t start = 0;
+    i = 0;
+    while (i + sl <= n) {
+        int32_t hit = 1;
+        for (int32_t j = 0; j < sl; j++) {
+            if (cs[i + j] != sp[j]) {
+                hit = 0;
+                break;
+            }
+        }
+        if (hit) {
+            data[k++] = aot_str_substring(s, start, i);
+            i += sl;
+            start = i;
+        } else {
+            i++;
+        }
+    }
+    data[k++] = aot_str_substring(s, start, n);
+    while (k > 0 && aot_str_length(data[k - 1]) == 0) {
+        k--;
+    }
+    *(int32_t *)((char *)arr + 16) = k;
+    return (int64_t)(intptr_t)arr;
 }
 
 int64_t aot_str_substring(int64_t s, int32_t from, int32_t to)
@@ -2655,15 +2842,15 @@ int64_t aot_arrays_sort_int(int64_t arr)
         return 0;
     }
     int32_t len = *(int32_t *)((char *)(intptr_t)arr + 16);
-    int32_t *data = (int32_t *)((char *)(intptr_t)arr + 24);
+    int64_t *slots = (int64_t *)((char *)(intptr_t)arr + 24);
     for (int32_t i = 1; i < len; i++) {
-        int32_t key = data[i];
+        int32_t key = (int32_t)slots[i];
         int32_t j = i - 1;
-        while (j >= 0 && data[j] > key) {
-            data[j + 1] = data[j];
+        while (j >= 0 && (int32_t)slots[j] > key) {
+            slots[j + 1] = slots[j];
             j--;
         }
-        data[j + 1] = key;
+        slots[j + 1] = key;
     }
     return arr;
 }

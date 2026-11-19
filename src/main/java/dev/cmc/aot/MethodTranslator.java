@@ -1180,12 +1180,7 @@ private String currentHandler() {
     }
 
     private static int elemSize(String kind) {
-        return switch (kind) {
-            case "B", "Z" -> 1;
-            case "C", "S" -> 2;
-            case "I", "F" -> 4;
-            default -> 8;
-        };
+        return 8;
     }
 
     private String arrayElemPtr(String kind) {
@@ -1206,19 +1201,13 @@ private String currentHandler() {
         throwBuiltin("java/lang/ArrayIndexOutOfBoundsException");
         body.append(okBr).append(":\n");
         terminated = false;
-        String ety = switch (kind) {
-            case "B", "Z" -> "i8";
-            case "C", "S" -> "i16";
-            case "I" -> "i32";
-            case "F" -> "float";
-            default -> "i64";
-        };
+        String ety = "i64";
         String i64 = nv("ai");
         body.append("  ").append(i64).append(" = sext i32 ").append(idx).append(" to i64\n");
         String ep = nv("aep");
         body.append("  ").append(ep).append(" = getelementptr ").append(ety).append(", ptr ").append(ap).append(", i64 ").append(i64).append("\n");
         String base = nv("aep");
-        body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).append(", i32 ").append(ARRAY_DATA_OFFSET).append("\n");
+body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).append(", i32 ").append(ARRAY_DATA_OFFSET).append("\n");
         return base;
     }
 
@@ -1277,10 +1266,12 @@ private String currentHandler() {
 
     private void arrayLoadChar() {
         String ep = arrayElemPtr("C");
-        String v = nv("v");
-        body.append("  ").append(v).append(" = load i16, ptr ").append(ep).append("\n");
+        String w = nv("v");
+        body.append("  ").append(w).append(" = load i64, ptr ").append(ep).append("\n");
+        String t = nv("v");
+        body.append("  ").append(t).append(" = trunc i64 ").append(w).append(" to i16\n");
         String e = nv("v");
-        body.append("  ").append(e).append(" = zext i16 ").append(v).append(" to i32\n");
+        body.append("  ").append(e).append(" = zext i16 ").append(t).append(" to i32\n");
         pushInt(e);
     }
 
@@ -1731,6 +1722,51 @@ String objv = popRef();
                 String r = nv("v");
                 body.append("  ").append(r).append(" = call i32 @aot_str_last_index_of(i64 ").append(self)
                     .append(", i32 ").append(ch).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            case "split(Ljava/lang/String;)[Ljava/lang/String;" -> {
+                String sep = popRef();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_split(i64 ").append(self)
+                    .append(", i64 ").append(sep).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "toCharArray()[C" -> {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_to_char_array(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "repeat(I)Ljava/lang/String;" -> {
+                String n = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_repeat(i64 ").append(self)
+                    .append(", i32 ").append(n).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "strip()Ljava/lang/String;" -> {
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_str_strip(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            case "regionMatches(ILjava/lang/String;II)Z" -> {
+                String len = popInt();
+                String ooff = popInt();
+                String other = popRef();
+                String toff = popInt();
+                String self = popRef();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_str_region_equals(i64 ").append(self)
+                    .append(", i32 ").append(toff).append(", i64 ").append(other)
+                    .append(", i32 ").append(ooff).append(", i32 ").append(len).append(")\n");
                 pushInt(r);
                 return true;
             }

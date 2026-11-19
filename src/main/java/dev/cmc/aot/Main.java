@@ -197,12 +197,21 @@ public final class Main {
         declares.add("declare void @aot_set_ctor_type(i32)");
         declares.add("declare void @aot_set_ctor_meta_table(ptr, i32)");
         declares.add("declare void @aot_set_reflect_array_types(i32, i32)");
+        declares.add("declare void @aot_set_char_array_type(i32)");
+        declares.add("declare void @aot_set_string_array_type(i32)");
+        declares.add("declare i64 @aot_str_split(i64, i64)");
+        declares.add("declare i64 @aot_str_to_char_array(i64)");
+        declares.add("declare i64 @aot_str_repeat(i64, i32)");
+        declares.add("declare i64 @aot_str_strip(i64)");
+        declares.add("declare i32 @aot_str_region_equals(i64, i32, i64, i32, i32)");
         declares.add("declare void @aot_print_object(i64)");
         for (String d : declares) {
             ir.append(d).append('\n');
         }
         ir.append('\n').append(funcs);
         String reflectMetaInit = ReflectSupport.renderMetaInit(layout);
+        int charArrayTid = layout.typeId("[C");
+        int stringArrayTid = layout.typeId("[Ljava/lang/String;");
         ir.append(layout.renderTypeTables());
         ir.append(layout.renderClassNameTable());
         ir.append(ReflectSupport.renderMeta(layout));
@@ -217,6 +226,8 @@ public final class Main {
         ir.append("  store ptr @.root_slots, ptr @gc_roots\n");
         ir.append("  store i64 ").append(layout.rootCount(pool)).append(", ptr @gc_root_count\n");
         ir.append("  call void @aot_set_string_type(i32 ").append(layout.typeId("java/lang/String")).append(")\n");
+        ir.append("  call void @aot_set_char_array_type(i32 ").append(charArrayTid).append(")\n");
+        ir.append("  call void @aot_set_string_array_type(i32 ").append(stringArrayTid).append(")\n");
         ir.append("  call void @aot_set_integer_type(i32 ").append(layout.typeId("java/lang/Integer")).append(")\n");
         ir.append("  call void @aot_set_long_type(i32 ").append(layout.typeId("java/lang/Long")).append(")\n");
         ir.append(pool.renderStringInit());
