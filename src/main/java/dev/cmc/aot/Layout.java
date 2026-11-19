@@ -444,7 +444,7 @@ public final class Layout {
         StringBuilder sb = new StringBuilder();
         sb.append("@.class_names = global [").append(maxTypeId() + 1).append(" x i64] zeroinitializer\n");
         for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
-            String dotted = e.getKey().replace('/', '.');
+            String dotted = displayName(e.getKey());
             sb.append("@.cname_").append(e.getValue()).append(" = private constant [")
                 .append(dotted.length()).append(" x i8] c\"")
                 .append(escapeAsmString(dotted)).append("\"\n");
@@ -455,7 +455,7 @@ public final class Layout {
     public List<String> classNameInit(StringPool pool) {
         List<String> out = new ArrayList<>();
         for (Map.Entry<String, Integer> e : typeIds.entrySet()) {
-            String dotted = e.getKey().replace('/', '.');
+            String dotted = displayName(e.getKey());
             out.add("  %cn" + e.getValue() + " = call i64 @aot_str_from_utf8(i64 "
                 + "ptrtoint (ptr @.cname_" + e.getValue() + " to i64), i32 " + dotted.length() + ")");
             out.add("  %cnp" + e.getValue() + " = getelementptr [" + (maxTypeId() + 1) + " x i64], ptr @.class_names, i64 0, i32 "
@@ -463,6 +463,14 @@ public final class Layout {
             out.add("  store i64 %cn" + e.getValue() + ", ptr %cnp" + e.getValue());
         }
         return out;
+    }
+
+    private static String displayName(String internal) {
+        String dotted = internal.replace('/', '.');
+        if (dotted.length() == 1) {
+            return "[" + dotted;
+        }
+        return dotted;
     }
 
     public int maxTypeId() {

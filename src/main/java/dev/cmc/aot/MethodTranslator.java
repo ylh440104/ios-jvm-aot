@@ -2151,6 +2151,17 @@ String objv = popRef();
             }
             return false;
         }
+        if ("java/lang/Class".equals(owner)) {
+            if ("forName(Ljava/lang/String;)Ljava/lang/Class;".equals(key)) {
+                String nm = popRef();
+                declares.add("declare i64 @aot_class_for_name(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_class_for_name(i64 ").append(nm).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            return false;
+        }
         if ("java/util/Arrays".equals(owner)) {
             if ("sort([I)V".equals(key)) {
                 String arr = popRef();
