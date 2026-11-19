@@ -180,6 +180,7 @@ jobs:
         run: |
           set -e
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          export DYLD_ROOT_PATH="$SDK"
           for t in Hello Str2 ObjTest; do
             xcrun --sdk iphonesimulator clang -O1 \
               -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
