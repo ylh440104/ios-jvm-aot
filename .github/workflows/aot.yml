@@ -173,14 +173,14 @@ jobs:
           ./scripts/build-libffi-ios.sh simulator 16.0 build/ios
       - name: Emit LLVM IR for iOS tier1
         run: |
-          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/ios-Hello.ll
-          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Str2 -o build/ios-Str2.ll
-          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/ios-ObjTest.ll
+          for t in Hello Str2 ObjTest Buf1 Buf5 Ffi2 Ffi3 Buf9; do
+            java -jar target/ios-jvm-aot.jar -cp build/classes -entry "$t" -o "build/ios-$t.ll"
+          done
       - name: Run iOS tier1 binaries
         run: |
           set -e
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          for t in Hello Str2 ObjTest; do
+          for t in Hello Str2 ObjTest Buf1 Buf5 Ffi2 Ffi3 Buf9; do
             xcrun --sdk iphonesimulator clang -O1 \
               -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
               -Ivendor/libffi/src/aarch64 -Ibuild/ios/ffi-include \
@@ -195,7 +195,7 @@ jobs:
           export DYLD_ROOT_PATH="$RT"
           export DYLD_FALLBACK_FRAMEWORK_PATH="$RT/System/Library/Frameworks"
           export DYLD_FALLBACK_LIBRARY_PATH="$RT/usr/lib:$RT/System/Library/Frameworks"
-          for t in Hello Str2 ObjTest; do
+          for t in Hello Str2 ObjTest Buf1 Buf5 Ffi2 Ffi3 Buf9; do
             "./build/ios-$t-sim" > "build/ios-$t-out.txt"
           done
           printf 'Hello from AOT\n' > build/ios-hello-expect.txt
@@ -204,6 +204,16 @@ jobs:
           diff build/ios-Str2-jvm.txt build/ios-Str2-out.txt && echo IOS_STR2_OK
           (cd build/classes && java ObjTest) > build/ios-ObjTest-jvm.txt
           diff build/ios-ObjTest-jvm.txt build/ios-ObjTest-out.txt && echo IOS_OBJTEST_OK
+          printf '1\n32\n0\n32\n32\n12345\n-7\n0\n1\n2\n65\n66\n2\n0\n2\n2\n0\n4\n2\n0\ndone\n' > build/ios-b1-expect.txt
+          diff build/ios-b1-expect.txt build/ios-Buf1-out.txt && echo IOS_BUFFER_OK
+          printf '1\n1\nwrote\n1\n16\n3\n4\n3\n0\ndone\n' > build/ios-b5-expect.txt
+          diff build/ios-b5-expect.txt build/ios-Buf5-out.txt && echo IOS_BUFARG_OK
+          printf '1\n1\n1\n123\n456\n1\n0\n' > build/ios-f2-expect.txt
+          diff build/ios-f2-expect.txt build/ios-Ffi2-out.txt && echo IOS_FFI_OK
+          printf '1\n1\n1\n1\n0\n4.000\n1024.000\n2.000\n3.000\n-56\n4464\ndone\n' > build/ios-f3-expect.txt
+          diff build/ios-f3-expect.txt build/ios-Ffi3-out.txt && echo IOS_MATH_OK
+          printf '1\n1\n1\n5\n10\n20\n30\n40\n50\ndone\n' > build/ios-b9-expect.txt
+          diff build/ios-b9-expect.txt build/ios-Buf9-out.txt && echo IOS_CLOSURE_OK
       - name: Build iOS device object
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)

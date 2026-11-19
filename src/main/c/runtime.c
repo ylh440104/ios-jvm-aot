@@ -3404,6 +3404,50 @@ typedef struct {
     char *base;
 } direct_buf;
 
+static int aot_lib_name_is(const char *a, const char *b)
+{
+    int i = 0;
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static void *aot_dlopen_portable(const char *name)
+{
+    void *h = dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+    if (h) {
+        return h;
+    }
+    if (aot_lib_name_is(name, "libc.so") || aot_lib_name_is(name, "libc.so.6")) {
+        static const char *const cand[] = {"/usr/lib/libSystem.B.dylib", "libSystem.B.dylib", 0};
+        for (int i = 0; cand[i]; i++) {
+            h = dlopen(cand[i], RTLD_NOW | RTLD_GLOBAL);
+            if (h) {
+                return h;
+            }
+        }
+        return RTLD_DEFAULT;
+    }
+    if (aot_lib_name_is(name, "libm.so") || aot_lib_name_is(name, "libm.so.6")) {
+        h = dlopen("/usr/lib/libSystem.B.dylib", RTLD_NOW | RTLD_GLOBAL);
+        if (h) {
+            return h;
+        }
+        return RTLD_DEFAULT;
+    }
+    if (aot_lib_name_is(name, "libdl.so") || aot_lib_name_is(name, "libdl.so.2")) {
+        return RTLD_DEFAULT;
+    }
+    if (aot_lib_name_is(name, "libpthread.so") || aot_lib_name_is(name, "libpthread.so.0")) {
+        return RTLD_DEFAULT;
+    }
+    return 0;
+}
+
 int64_t aot_ffi_open(int64_t path)
 {
     if (path == 0) {
@@ -3421,7 +3465,7 @@ int64_t aot_ffi_open(int64_t path)
     if (!lib) {
         return 0;
     }
-    lib->handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+    lib->handle = aot_dlopen_portable(name);
     if (!lib->handle) {
         free(lib);
         return 0;
