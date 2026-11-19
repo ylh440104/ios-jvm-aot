@@ -662,12 +662,22 @@ public final class MethodTranslator {
             pushSlot(s);
             return;
         }
-        String idx = typeIndex(target);
+        String nullc = nv("cv");
+        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
+        String nullBr = "cvnull" + (tmp++);
+        String doBr = "cvdo" + (tmp++);
+        String badBr = "cvbad" + (tmp++);
+        String join = "cvjoin" + (tmp++);
+        body.append("  br i1 ").append(nullc).append(", label %").append(nullBr)
+            .append(", label %").append(doBr).append("\n");
+        body.append(nullBr).append(":\n  br label %").append(join).append("\n");
+        body.append(doBr).append(":\n");
         String objp = toPtr(s.value);
         String tip = nv("cv");
         body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(objp).append(", i32 8\n");
         String tid = nv("cv");
         body.append("  ").append(tid).append(" = load i32, ptr ").append(tip).append("\n");
+        String idx = typeIndex(target);
         String base = nv("cv");
         body.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots()).append(" x i32], ptr ")
             .append(idx).append(", i64 0, i32 0\n");
@@ -677,13 +687,14 @@ public final class MethodTranslator {
         body.append("  ").append(ok).append(" = load i32, ptr ").append(cell).append("\n");
         String nzc = nv("cv");
         body.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
-        String nullc = nv("cv");
-        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
-        String both = nv("cv");
-        body.append("  ").append(both).append(" = or i1 ").append(nzc).append(", ").append(nullc).append("\n");
-        String res = nv("cv");
-        body.append("  ").append(res).append(" = select i1 ").append(both).append(", i64 ").append(s.value).append(", i64 0\n");
-        pushRef(res);
+        body.append("  br i1 ").append(nzc).append(", label %").append(join)
+            .append(", label %").append(badBr).append("\n");
+        body.append(badBr).append(":\n  br label %").append(join).append("\n");
+        body.append(join).append(":\n");
+        String ph = nv("cv");
+        body.append("  ").append(ph).append(" = phi i64 [ 0, %").append(nullBr).append(" ], [ ").append(s.value)
+            .append(", %").append(doBr).append(" ], [ 0, %").append(badBr).append(" ]\n");
+        pushRef(ph);
     }
 
     private void instanceOf(TypeInsnNode tn) {
@@ -693,12 +704,22 @@ public final class MethodTranslator {
             pushIntLit(0);
             return;
         }
-        String idx = typeIndex(target);
+        String nullc = nv("iv");
+        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
+        String nullBr = "ivnull" + (tmp++);
+        String nullOut = "ivinullres" + (tmp++);
+        String doBr = "ivdo" + (tmp++);
+        String join = "ivjoin" + (tmp++);
+        body.append("  br i1 ").append(nullc).append(", label %").append(nullBr)
+            .append(", label %").append(doBr).append("\n");
+        body.append(nullBr).append(":\n  br label %").append(join).append("\n");
+        body.append(doBr).append(":\n");
         String objp = toPtr(s.value);
         String tip = nv("iv");
         body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(objp).append(", i32 8\n");
         String tid = nv("iv");
         body.append("  ").append(tid).append(" = load i32, ptr ").append(tip).append("\n");
+        String idx = typeIndex(target);
         String base = nv("iv");
         body.append("  ").append(base).append(" = getelementptr [").append(typeTableSlots()).append(" x i32], ptr ")
             .append(idx).append(", i64 0, i32 0\n");
@@ -710,11 +731,12 @@ public final class MethodTranslator {
         body.append("  ").append(nzc).append(" = icmp ne i32 ").append(ok).append(", 0\n");
         String res = nv("iv");
         body.append("  ").append(res).append(" = zext i1 ").append(nzc).append(" to i32\n");
-        String nullc = nv("iv");
-        body.append("  ").append(nullc).append(" = icmp eq i64 ").append(s.value).append(", 0\n");
-        String finalv = nv("iv");
-        body.append("  ").append(finalv).append(" = select i1 ").append(nullc).append(", i32 0, i32 ").append(res).append("\n");
-        pushInt(finalv);
+        body.append("  br label %").append(join).append("\n");
+        body.append(join).append(":\n");
+        String ph = nv("iv");
+        body.append("  ").append(ph).append(" = phi i32 [ 0, %").append(nullBr).append(" ], [ ").append(res)
+            .append(", %").append(doBr).append(" ]\n");
+        pushInt(ph);
     }
 
 

@@ -68,6 +68,8 @@ jobs:
       - name: Compile with clang
         run: |
           for t in hello obj arr st rf num ty; do
+            clang -O0 build/$t.ll -o build/$t-o0-bin
+            ./build/$t-o0-bin
             clang -O1 build/$t.ll -o build/$t-bin
             ./build/$t-bin
           done
