@@ -43,6 +43,7 @@ public final class LambdaSynthesizer {
     }
 
     public static void scan(List<ClassInfo> classes) {
+        SITE_TO_CLASS.clear();
         int seq = 0;
         for (ClassInfo c : new ArrayList<>(classes)) {
             for (MethodNode mn : new ArrayList<>(c.methods())) {
@@ -93,6 +94,8 @@ public final class LambdaSynthesizer {
         ctor.access = Opcodes.ACC_PUBLIC;
         ctor.name = "<init>";
         ctor.desc = "(" + repeatJ(captured.length) + ")V";
+        ctor.maxLocals = 1 + captured.length;
+        ctor.maxStack = 4 + captured.length;
         ctor.instructions = new InsnList();
         InsnList ci = ctor.instructions;
         ci.add(new VarInsnNode(Opcodes.ALOAD, 0));
@@ -109,6 +112,8 @@ public final class LambdaSynthesizer {
         sam.access = Opcodes.ACC_PUBLIC;
         sam.name = samName;
         sam.desc = samDesc;
+        sam.maxLocals = 1 + captured.length + samArgs.length + 4;
+        sam.maxStack = 8;
         sam.instructions = new InsnList();
         InsnList si = sam.instructions;
         int localSlot = 1 + captured.length;

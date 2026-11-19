@@ -65,7 +65,7 @@ public final class MethodTranslator {
         this.pool = pool;
         this.declares = declares;
         this.layout = layout;
-        this.localsSize = Math.max(mn.maxLocals, 2);
+        this.localsSize = Math.max(mn.maxLocals, 2 + TypeInfo.argKinds(mn.desc).size() * 2);
         this.frames = frames;
     }
 
@@ -1803,15 +1803,17 @@ String objv = popRef();
             raw[i] = popOfKind(kinds.get(i));
         }
         declares.add("declare ptr @gc_calloc(i64, i64)");
-        int size = layout.objectSize(cls);
+        int size = Math.max(layout.objectSize(cls), Layout.HEADER_SIZE + 16);
         String rawPtr = nv("lp");
         body.append("  ").append(rawPtr).append(" = call ptr @gc_calloc(i64 ").append(size).append(", i64 1)\n");
         String addr = nv("la");
         body.append("  ").append(addr).append(" = ptrtoint ptr ").append(rawPtr).append(" to i64\n");
         String vtLabel = layout.vtableLabel(cls);
-        String vtp = nv("lv");
-        body.append("  ").append(vtp).append(" = getelementptr ptr, ptr ").append(rawPtr).append(", i32 0\n");
-        body.append("  store ptr ").append(vtLabel).append(", ptr ").append(vtp).append("\n");
+        String vtoff = nv("lv");
+        body.append("  ").append(vtoff).append(" = getelementptr i8, ptr ").append(rawPtr).append(", i32 0\n");
+        String vtpp = nv("lvp");
+        body.append("  ").append(vtpp).append(" = bitcast ptr ").append(vtoff).append(" to ptr\n");
+        body.append("  store ptr ").append(vtLabel).append(", ptr ").append(vtpp).append("\n");
         String tip = nv("lt");
         body.append("  ").append(tip).append(" = getelementptr i8, ptr ").append(rawPtr).append(", i32 8\n");
         String tpp = nv("ltp");
