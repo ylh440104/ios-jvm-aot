@@ -230,12 +230,16 @@ public final class MethodTranslator {
             }
             case Opcodes.FRETURN -> {
                 String v = popFloat();
-                emitReturn("float", v);
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = bitcast float ").append(v).append(" to i32\n");
+                emitReturn("i32", bits);
                 terminated = true;
             }
             case Opcodes.DRETURN -> {
                 String v = popDouble();
-                emitReturn("double", v);
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = bitcast double ").append(v).append(" to i64\n");
+                emitReturn("i64", bits);
                 terminated = true;
             }
             case Opcodes.ARETURN -> {
@@ -1437,8 +1441,7 @@ body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).ap
         StringBuilder callArgs = new StringBuilder("i64 ").append(objp);
         for (int i = 0; i < kinds.size(); i++) {
             String ak = kinds.get(i);
-            String at = "F".equals(ak) ? "i32" : TypeInfo.llvm(ak);
-            callArgs.append(", ").append(at).append(" ").append(raw[i]);
+            callArgs.append(", ").append(slotType(ak)).append(" ").append(raw[i]);
         }
         String r = nv("r");
         body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" @")
@@ -1498,8 +1501,7 @@ String objv = popRef();
         StringBuilder callArgs = new StringBuilder("i64 ").append(objv);
         for (int i = 0; i < kinds.size(); i++) {
             String ak = kinds.get(i);
-            String at = "F".equals(ak) ? "i32" : TypeInfo.llvm(ak);
-            callArgs.append(", ").append(at).append(" ").append(raw[i]);
+            callArgs.append(", ").append(slotType(ak)).append(" ").append(raw[i]);
         }
         String rc = nv("r");
         String rll = retLlvm(m.desc);
@@ -1536,13 +1538,21 @@ String objv = popRef();
             if (i > 0) {
                 callArgs.append(", ");
             }
-            callArgs.append(TypeInfo.llvm(kinds.get(i))).append(" ").append(raw[i]);
+            String ak = kinds.get(i);
+            callArgs.append(slotType(ak)).append(" ").append(raw[i]);
         }
         String r = nv("r");
         body.append("  ").append(r).append(" = call ").append(retLlvm(m.desc)).append(" @")
             .append(ClassParser.mangle(m.owner, m.name, m.desc)).append("(").append(callArgs).append(")\n");
         emitCallUnwind();
         pushReturnValue(m.desc, r);
+    }
+
+    private static String slotType(String kind) {
+        return switch (kind) {
+            case "I", "F" -> "i32";
+            default -> "i64";
+        };
     }
 
     private boolean invokeString(MethodInsnNode m) {
@@ -2171,48 +2181,61 @@ String objv = popRef();
         int want = b.args.length;
         String[] raw = new String[want];
         for (int i = want - 1; i >= 0; i--) {
-            String k = b.args[i];
-            raw[i] = "i32".equals(k) ? popInt() : popRef();
+            raw[i] = popByKind(b.args[i]);
         }
-        declares.add("declare " + retLlvmOf(b.ret) + " @" + b.cName + "(" + sigOf(b.args) + ")");
+        String[] argTypes = new String[want];
+        StringBuilder sig = new StringBuilder();
         StringBuilder callArgs = new StringBuilder();
         for (int i = 0; i < want; i++) {
+            argTypes[i] = llvmOfKind(b.args[i]);
             if (i > 0) {
+                sig.append(", ");
                 callArgs.append(", ");
             }
-            callArgs.append("i32".equals(b.args[i]) ? "i32" : "i64").append(" ").append(raw[i]);
+            sig.append(argTypes[i]);
+            callArgs.append(argTypes[i]).append(" ").append(raw[i]);
         }
-        if (b.ret == null) {
+        String retType = llvmOfKind(b.ret);
+        declares.add("declare " + retType + " @" + b.cName + "(" + sig + ")");
+        if (b.ret == FfiSupport.K_VOID) {
             body.append("  call void @").append(b.cName).append("(").append(callArgs).append(")\n");
             return true;
         }
         String r = nv("v");
-        body.append("  ").append(r).append(" = call ").append(retLlvmOf(b.ret))
+        body.append("  ").append(r).append(" = call ").append(retType)
             .append(" @").append(b.cName).append("(").append(callArgs).append(")\n");
-        if ("i32".equals(b.ret)) {
-            pushInt(r);
-        } else {
-            pushRef(r);
-        }
+        pushByKind(b.ret, r);
         return true;
     }
 
-    private static String retLlvmOf(String ret) {
-        if (ret == null) {
-            return "void";
-        }
-        return ret;
+    private String popByKind(int kind) {
+        return switch (kind) {
+            case FfiSupport.K_I32 -> popInt();
+            case FfiSupport.K_F32 -> popFloat();
+            case FfiSupport.K_F64 -> popDouble();
+            case FfiSupport.K_I64 -> popLong();
+            default -> popRef();
+        };
     }
 
-    private static String sigOf(String[] args) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < args.length; i++) {
-            if (i > 0) {
-                sb.append(", ");
-            }
-            sb.append("i32".equals(args[i]) ? "i32" : "i64");
+    private void pushByKind(int kind, String v) {
+        switch (kind) {
+            case FfiSupport.K_I32 -> pushInt(v);
+            case FfiSupport.K_F32 -> pushFloat(v);
+            case FfiSupport.K_F64 -> pushDouble(v);
+            case FfiSupport.K_I64 -> pushLong(v);
+            default -> pushRef(v);
         }
-        return sb.toString();
+    }
+
+    private static String llvmOfKind(int kind) {
+        return switch (kind) {
+            case FfiSupport.K_VOID -> "void";
+            case FfiSupport.K_I32 -> "i32";
+            case FfiSupport.K_F32 -> "float";
+            case FfiSupport.K_F64 -> "double";
+            default -> "i64";
+        };
     }
 
     private boolean invokeStaticJdk(MethodInsnNode m) {
@@ -2420,6 +2443,85 @@ String objv = popRef();
                 String r = nv("v");
                 body.append("  ").append(r).append(" = call i32 @aot_box_int(i64 ").append(self).append(")\n");
                 pushInt(r);
+                return true;
+            }
+            return false;
+        }
+        if ("java/lang/Double".equals(owner)) {
+            if ("doubleToLongBits(D)J".equals(key) || "doubleToRawLongBits(D)J".equals(key)) {
+                String v = popDouble();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast double ").append(v).append(" to i64\n");
+                pushLong(r);
+                return true;
+            }
+            if ("longBitsToDouble(J)D".equals(key)) {
+                String v = popLong();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast i64 ").append(v).append(" to double\n");
+                pushDouble(r);
+                return true;
+            }
+            if ("floatToIntBits(F)I".equals(key) || "floatToRawIntBits(F)I".equals(key)) {
+                String v = popFloat();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast float ").append(v).append(" to i32\n");
+                pushInt(r);
+                return true;
+            }
+            if ("intBitsToFloat(I)F".equals(key)) {
+                String v = popInt();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast i32 ").append(v).append(" to float\n");
+                pushFloat(r);
+                return true;
+            }
+            if ("isNaN(D)Z".equals(key)) {
+                String v = popDouble();
+                String r = nv("v");
+                body.append("  ").append(r).append(" = fcmp uno double ").append(v).append(", ").append(v).append("\n");
+                String z = nv("v");
+                body.append("  ").append(z).append(" = zext i1 ").append(r).append(" to i32\n");
+                pushInt(z);
+                return true;
+            }
+            if ("valueOf(D)Ljava/lang/Double;".equals(key)) {
+                String v = popDouble();
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = bitcast double ").append(v).append(" to i64\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_box_double(i64 ").append(bits).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("doubleValue()D".equals(key)) {
+                String self = popRef();
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = call i64 @aot_unbox_double(i64 ").append(self).append(")\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast i64 ").append(bits).append(" to double\n");
+                pushDouble(r);
+                return true;
+            }
+            return false;
+        }
+        if ("java/lang/Float".equals(owner)) {
+            if ("valueOf(F)Ljava/lang/Float;".equals(key)) {
+                String v = popFloat();
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = bitcast float ").append(v).append(" to i32\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_box_float(i32 ").append(bits).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("floatValue()F".equals(key)) {
+                String self = popRef();
+                String bits = nv("v");
+                body.append("  ").append(bits).append(" = call i32 @aot_unbox_float(i64 ").append(self).append(")\n");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = bitcast i32 ").append(bits).append(" to float\n");
+                pushFloat(r);
                 return true;
             }
             return false;
@@ -2986,7 +3088,11 @@ String objv = popRef();
             }
             case "I" -> pushInt(reg);
             case "F" -> pushFloat(reg);
-            case "D" -> pushDouble(reg);
+            case "D" -> {
+                String asD = nv("v");
+                body.append("  ").append(asD).append(" = bitcast i64 ").append(reg).append(" to double\n");
+                pushDouble(asD);
+            }
             case "L" -> pushRef(reg);
             default -> pushLong(reg);
         }

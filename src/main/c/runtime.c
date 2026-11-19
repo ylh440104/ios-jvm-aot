@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <dlfcn.h>
+#include <ffi.h>
 
 #define GC_MAGIC 0x47434F424A4C4CULL
 #define GC_HEADER 16
@@ -3653,4 +3654,295 @@ int32_t aot_addr_get4_at(int64_t addr)
         return 0;
     }
     return *(int32_t *)(intptr_t)addr;
+}
+
+#define FK_VOID 0
+#define FK_I32 1
+#define FK_I64 2
+#define FK_F32 3
+#define FK_F64 4
+#define FK_PTR 5
+
+static void ffi_type_for(int32_t k, ffi_type **t)
+{
+    switch (k) {
+        case FK_I32: *t = &ffi_type_sint32; break;
+        case FK_F32: *t = &ffi_type_float; break;
+        case FK_F64: *t = &ffi_type_double; break;
+        case FK_I64: *t = &ffi_type_sint64; break;
+        default: *t = &ffi_type_pointer; break;
+    }
+}
+
+static int64_t libffi_call(int64_t fn, int32_t retk, int64_t *slots, int32_t nargs, int32_t *argk)
+{
+    if (fn == 0) {
+        return 0;
+    }
+    ffi_type *rt;
+    if (retk == FK_VOID) {
+        rt = &ffi_type_void;
+    } else {
+        ffi_type_for(retk, &rt);
+    }
+    ffi_type **at = 0;
+    void **av = 0;
+    if (nargs > 0) {
+        at = (ffi_type **)calloc((size_t)nargs, sizeof(ffi_type *));
+        av = (void **)calloc((size_t)nargs, sizeof(void *));
+        if (!at || !av) {
+            free(at);
+            free(av);
+            return 0;
+        }
+    }
+    union {
+        int32_t i32v;
+        int64_t i64v;
+        float f32v;
+        double f64v;
+        void *pv;
+    } cells[16];
+    int32_t n = nargs > 16 ? 16 : nargs;
+    for (int32_t i = 0; i < n; i++) {
+        ffi_type_for(argk[i], &at[i]);
+        int64_t raw = slots[i];
+        switch (argk[i]) {
+            case FK_I32:
+                cells[i].i32v = (int32_t)raw;
+                av[i] = &cells[i].i32v;
+                break;
+            case FK_F32:
+                memcpy(&cells[i].f32v, &raw, sizeof(float));
+                av[i] = &cells[i].f32v;
+                break;
+            case FK_F64:
+                memcpy(&cells[i].f64v, &raw, sizeof(double));
+                av[i] = &cells[i].f64v;
+                break;
+            case FK_I64:
+                cells[i].i64v = raw;
+                av[i] = &cells[i].i64v;
+                break;
+            default:
+                cells[i].pv = (void *)(intptr_t)raw;
+                av[i] = &cells[i].pv;
+                break;
+        }
+    }
+    ffi_cif cif;
+    if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, (unsigned int)n, rt, at) != FFI_OK) {
+        free(at);
+        free(av);
+        return 0;
+    }
+    int64_t out = 0;
+    if (retk == FK_VOID) {
+        ffi_call(&cif, FFI_FN((void *)(intptr_t)fn), 0, av);
+    } else if (retk == FK_I32) {
+        int32_t rv = 0;
+        ffi_call(&cif, FFI_FN((void *)(intptr_t)fn), &rv, av);
+        out = (int64_t)rv;
+    } else if (retk == FK_F32) {
+        float rv = 0;
+        ffi_call(&cif, FFI_FN((void *)(intptr_t)fn), &rv, av);
+        int32_t bits = 0;
+        memcpy(&bits, &rv, sizeof(float));
+        out = (int64_t)bits;
+    } else if (retk == FK_F64) {
+        double rv = 0;
+        ffi_call(&cif, FFI_FN((void *)(intptr_t)fn), &rv, av);
+        memcpy(&out, &rv, sizeof(double));
+    } else {
+        void *rv = 0;
+        ffi_call(&cif, FFI_FN((void *)(intptr_t)fn), &rv, av);
+        out = (int64_t)(intptr_t)rv;
+    }
+    free(at);
+    free(av);
+    return out;
+}
+
+int64_t aot_ffi_invoke(int64_t fn, int32_t retk, int64_t slots, int32_t nargs, int64_t kinds)
+{
+    int32_t kinds32[16];
+    int32_t n = nargs > 16 ? 16 : nargs;
+    int64_t *ks = (int64_t *)(intptr_t)kinds;
+    for (int32_t i = 0; i < n; i++) {
+        kinds32[i] = (int32_t)ks[i];
+    }
+    return libffi_call(fn, retk, (int64_t *)(intptr_t)slots, nargs, kinds32);
+}
+
+void aot_addr_putf_at(int64_t addr, float v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(float *)(intptr_t)addr = v;
+}
+
+void aot_addr_putd_at(int64_t addr, double v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(double *)(intptr_t)addr = v;
+}
+
+float aot_addr_getf_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0.0f;
+    }
+    return *(float *)(intptr_t)addr;
+}
+
+double aot_addr_getd_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0.0;
+    }
+    return *(double *)(intptr_t)addr;
+}
+
+void aot_addr_put1_at(int64_t addr, int32_t v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(int8_t *)(intptr_t)addr = (int8_t)v;
+}
+
+void aot_addr_put2_at(int64_t addr, int32_t v)
+{
+    if (addr == 0) {
+        return;
+    }
+    *(int16_t *)(intptr_t)addr = (int16_t)v;
+}
+
+int32_t aot_addr_get1_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0;
+    }
+    return *(int8_t *)(intptr_t)addr;
+}
+
+int32_t aot_addr_get2_at(int64_t addr)
+{
+    if (addr == 0) {
+        return 0;
+    }
+    return *(int16_t *)(intptr_t)addr;
+}
+
+int64_t aot_mem_set(int64_t addr, int64_t n, int32_t v)
+{
+    if (addr == 0 || n <= 0) {
+        return addr;
+    }
+    memset((void *)(intptr_t)addr, v, (size_t)n);
+    return addr;
+}
+
+static __thread char *stack_arena;
+static __thread int64_t stack_size;
+static __thread int64_t stack_top;
+
+int64_t aot_stack_push(void)
+{
+    int64_t mark = stack_top;
+    if (stack_arena == 0) {
+        stack_size = 64 * 1024;
+        stack_arena = (char *)malloc((size_t)stack_size);
+        stack_top = 0;
+        mark = 0;
+    }
+    return mark;
+}
+
+void aot_stack_pop(void)
+{
+    if (stack_arena != 0) {
+        free(stack_arena);
+        stack_arena = 0;
+        stack_size = 0;
+        stack_top = 0;
+    }
+}
+
+int64_t aot_stack_malloc(int64_t n)
+{
+    if (n <= 0) {
+        return 0;
+    }
+    if (stack_arena == 0) {
+        stack_size = 64 * 1024;
+        stack_arena = (char *)malloc((size_t)stack_size);
+        stack_top = 0;
+    }
+    int64_t aligned = (n + 15) & ~15LL;
+    if (stack_top + aligned > stack_size) {
+        return 0;
+    }
+    int64_t p = (int64_t)(intptr_t)(stack_arena + stack_top);
+    stack_top += aligned;
+    return p;
+}
+
+int32_t aot_double_box_type_id;
+int32_t aot_float_box_type_id;
+
+void aot_set_double_box_type(int32_t t)
+{
+    aot_double_box_type_id = t;
+}
+
+void aot_set_float_box_type(int32_t t)
+{
+    aot_float_box_type_id = t;
+}
+
+int64_t aot_box_double(int64_t bits)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_double_box_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int64_t *)((char *)obj + 16) = bits;
+    return (int64_t)(intptr_t)obj;
+}
+
+int64_t aot_unbox_double(int64_t o)
+{
+    if (o == 0) {
+        return 0;
+    }
+    return *(int64_t *)((char *)(intptr_t)o + 16);
+}
+
+int64_t aot_box_float(int32_t bits)
+{
+    void *obj = gc_alloc(24);
+    if (!obj) {
+        return 0;
+    }
+    *(void **)(char *)obj = aot_string_vtable;
+    *(int32_t *)((char *)obj + 8) = aot_float_box_type_id;
+    *(int32_t *)((char *)obj + 12) = 0;
+    *(int32_t *)((char *)obj + 16) = bits;
+    return (int64_t)(intptr_t)obj;
+}
+
+int32_t aot_unbox_float(int64_t o)
+{
+    if (o == 0) {
+        return 0;
+    }
+    return *(int32_t *)((char *)(intptr_t)o + 16);
 }

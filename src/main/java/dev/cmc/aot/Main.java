@@ -210,6 +210,12 @@ public final class Main {
         declares.add("declare i32 @aot_class_is_assignable_from(i32, i32)");
         declares.add("declare i32 @aot_class_is_interface(i32)");
         declares.add("declare ptr @gc_calloc(i64, i64)");
+        declares.add("declare void @aot_set_double_box_type(i32)");
+        declares.add("declare void @aot_set_float_box_type(i32)");
+        declares.add("declare i64 @aot_box_double(i64)");
+        declares.add("declare i64 @aot_unbox_double(i64)");
+        declares.add("declare i64 @aot_box_float(i32)");
+        declares.add("declare i32 @aot_unbox_float(i64)");
         declares.add("declare i64 @aot_str_split(i64, i64)");
         declares.add("declare i64 @aot_str_to_char_array(i64)");
         declares.add("declare i64 @aot_str_repeat(i64, i32)");
@@ -225,6 +231,8 @@ public final class Main {
         int stringArrayTid = layout.typeId("[Ljava/lang/String;");
         int charBoxTid = layout.typeId("java/lang/Character");
         int boolBoxTid = layout.typeId("java/lang/Boolean");
+        int doubleBoxTid = layout.typeId("java/lang/Double");
+        int floatBoxTid = layout.typeId("java/lang/Float");
         String assignDecl = layout.renderAssignTable();
         String assignInit = layout.renderAssignInit();
         String superDecl = layout.renderSuperTable();
@@ -252,6 +260,8 @@ public final class Main {
         ir.append("  call void @aot_set_string_array_type(i32 ").append(stringArrayTid).append(")\n");
         ir.append("  call void @aot_set_char_box_type(i32 ").append(charBoxTid).append(")\n");
         ir.append("  call void @aot_set_bool_box_type(i32 ").append(boolBoxTid).append(")\n");
+        ir.append("  call void @aot_set_double_box_type(i32 ").append(doubleBoxTid).append(")\n");
+        ir.append("  call void @aot_set_float_box_type(i32 ").append(floatBoxTid).append(")\n");
         ir.append("  call void @aot_set_integer_type(i32 ").append(layout.typeId("java/lang/Integer")).append(")\n");
         ir.append("  call void @aot_set_long_type(i32 ").append(layout.typeId("java/lang/Long")).append(")\n");
         ir.append(pool.renderStringInit());
