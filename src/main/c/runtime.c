@@ -1327,7 +1327,7 @@ typedef struct aot_thread_rec {
 static aot_thread_rec *thread_recs;
 static pthread_mutex_t thread_rec_lock = PTHREAD_MUTEX_INITIALIZER;
 
-extern void aot_thread_body(int64_t body, int64_t self);
+extern void aot_thread_body(int64_t body, int64_t self) __attribute__((weak));
 
 typedef struct {
     int64_t body;
@@ -1341,7 +1341,9 @@ static void *thread_trampoline(void *raw)
     int64_t self = a->self;
     free(a);
     gc_thread_attach();
-    aot_thread_body(body, self);
+    if (aot_thread_body) {
+        aot_thread_body(body, self);
+    }
     gc_thread_detach();
     return 0;
 }
