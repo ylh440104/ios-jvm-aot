@@ -18,8 +18,13 @@ jobs:
 
       - name: Install LLVM
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq llvm clang
+          for i in 1 2 3 4 5; do
+            if sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y -qq llvm clang 2>/dev/null; then
+              break
+            fi
+            echo "retry $i"
+            sleep 15
+          done
           llvm-as --version | head -3
 
       - name: Build compiler
