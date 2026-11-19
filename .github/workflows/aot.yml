@@ -153,49 +153,58 @@ jobs:
           diff build/fn-b9-expect.txt build/fn-Buf9-out.txt && echo CLOSURE_OK
 
   ios:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Build compiler
         run: mvn -B -q package -Dmaven.resources.skip=true
-
       - name: Compile test classes
         run: |
           mkdir -p build/classes
           javac -d build/classes $(find testdata -name '*.java')
-
-      - name: Emit LLVM IR
-        run: java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/out.ll
-
-      - name: Link for iOS simulator
+      - name: Build libffi for iOS simulator
         run: |
+          chmod +x scripts/build-libffi-ios.sh vendor/libffi/gen-headers.sh
+          ./scripts/build-libffi-ios.sh simulator 16.0 build/ios
+      - name: Emit LLVM IR for iOS tier1
+        run: |
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Hello -o build/ios-Hello.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Str2 -o build/ios-Str2.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry ObjTest -o build/ios-ObjTest.ll
+      - name: Run iOS tier1 binaries
+        run: |
+          set -e
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          xcrun --sdk iphonesimulator clang -O1 \
-            -target arm64-apple-ios16.0-simulator \
-            -isysroot "$SDK" build/out.ll src/main/c/runtime.c -o build/hello-sim
-          file build/hello-sim
-
+          for t in Hello Str2 ObjTest; do
+            xcrun --sdk iphonesimulator clang -O1 \
+              -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
+              -Ibuild/ios/ffi-include \
+              "build/ios-$t.ll" src/main/c/runtime.c build/ios/libffi.a \
+              -o "build/ios-$t-sim"
+            "./build/ios-$t-sim" > "build/ios-$t-out.txt"
+          done
+          printf 'Hello from AOT\n' > build/ios-hello-expect.txt
+          diff build/ios-hello-expect.txt build/ios-Hello-out.txt && echo IOS_HELLO_OK
+          (cd build/classes && java Str2) > build/ios-Str2-jvm.txt
+          diff build/ios-Str2-jvm.txt build/ios-Str2-out.txt && echo IOS_STR2_OK
+          (cd build/classes && java ObjTest) > build/ios-ObjTest-jvm.txt
+          diff build/ios-ObjTest-jvm.txt build/ios-ObjTest-out.txt && echo IOS_OBJTEST_OK
       - name: Build iOS device object
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos clang -O1 -c \
-            -target arm64-apple-ios16.0 \
-            -isysroot "$SDK" build/out.ll -o build/hello-device.o
+          xcrun --sdk iphonesimulator clang -O1 -c \
+            -target arm64-apple-ios16.0 -isysroot "$SDK" build/ios-Hello.ll -o build/hello-device.o
           file build/hello-device.o
           lipo -info build/hello-device.o
-
       - uses: actions/upload-artifact@v4
         with:
           name: ios-objects
           path: |
-            build/out.ll
-            build/hello-sim
-            build/hello-device.o
+            build/ios-Hello.ll
+            build/ios-Hello-sim
+            build/ios/ffi-include/ffi.h
