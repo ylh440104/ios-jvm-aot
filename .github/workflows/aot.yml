@@ -183,7 +183,8 @@ jobs:
           for t in Hello Str2 ObjTest; do
             xcrun --sdk iphonesimulator clang -O1 \
               -target arm64-apple-ios16.0-simulator -isysroot "$SDK" \
-              -Ibuild/ios/ffi-include \
+              -Ivendor/libffi/src/aarch64 -Ibuild/ios/ffi-include \
+              -Ivendor/libffi/include -Ivendor/libffi/src -Ivendor/libffi \
               "build/ios-$t.ll" src/main/c/runtime.c build/ios/libffi.a \
               -o "build/ios-$t-sim"
             "./build/ios-$t-sim" > "build/ios-$t-out.txt"
