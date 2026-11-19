@@ -93,6 +93,8 @@ final class FfiSupport {
         reg("NativeCall", "bufBytes", "(Ljava/lang/Object;)J", "aot_buf_arg_bytes", K_I64, K_PTR);
         reg("NativeCall", "callBuf1", "(JLjava/lang/Object;)I", "aot_ffi_call_buf1", K_I32, K_PTR, K_BUF);
         reg("NativeCall", "callBuf2", "(JILjava/lang/Object;)I", "aot_ffi_call_buf2", K_I32, K_PTR, K_I32, K_BUF);
+        reg("NativeCall", "callQsort", "(JJIIJ)I", "aot_ffi_call_qsort", K_I32,
+            K_PTR, K_I64, K_I32, K_I32, K_I64);
     }
 
     static Bind lookup(String owner, String name, String desc) {

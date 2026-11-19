@@ -182,7 +182,7 @@ public final class Main {
         declares.add("declare i64 @aot_object_array_ptr(i64)");
         String methodMetaDecl = MethodSupport.renderMethodMeta(layout);
         String methodMetaInit = MethodSupport.renderMethodMetaInit(layout);
-        String methodTrampolines = MethodSupport.renderTrampolines(layout) + MethodSupport.renderDispatch(layout);
+        String methodTrampolines = MethodSupport.renderTrampolines(layout) + MethodSupport.renderDispatch(layout) + ClosureSupport.render();
         String ctorMetaDecl = MethodSupport.renderCtorMeta(layout);
         String ctorMetaInit = MethodSupport.renderCtorMetaInit(layout);
         String ctorWrappers = MethodSupport.renderCtorWrappers(layout);

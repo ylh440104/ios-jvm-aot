@@ -4333,3 +4333,125 @@ int32_t aot_ffi_call_buf2(int64_t fn, int32_t a, int64_t addr)
     int32_t (*f)(int32_t, int64_t) = (int32_t (*)(int32_t, int64_t))(intptr_t)fn;
     return f(a, addr);
 }
+
+typedef struct {
+    ffi_cif cif;
+    ffi_type **at;
+    ffi_type *rt;
+    void *code;
+    ffi_closure *closure;
+    int64_t target;
+    int32_t retk;
+    int32_t nargs;
+    int32_t argk[16];
+} aot_closure;
+
+static void aot_closure_tramp(ffi_cif *cif, void *ret, void **args, void *ud)
+{
+    aot_closure *c = (aot_closure *)ud;
+    int64_t slots[16];
+    int32_t n = c->nargs;
+    for (int32_t i = 0; i < n; i++) {
+        switch (c->argk[i]) {
+            case FK_I32:
+                slots[i] = (int64_t)(*(int32_t *)args[i]);
+                break;
+            case FK_F32: {
+                float f = *(float *)args[i];
+                int32_t bits = 0;
+                memcpy(&bits, &f, sizeof(float));
+                slots[i] = (int64_t)bits;
+                break;
+            }
+            case FK_F64: {
+                double d = *(double *)args[i];
+                int64_t bits = 0;
+                memcpy(&bits, &d, sizeof(double));
+                slots[i] = bits;
+                break;
+            }
+            case FK_I64:
+                slots[i] = *(int64_t *)args[i];
+                break;
+            default:
+                slots[i] = (int64_t)(intptr_t)(*(void **)args[i]);
+                break;
+        }
+    }
+    int64_t (*target)(int64_t *) = (int64_t (*)(int64_t *))(intptr_t)c->target;
+    int64_t out = target(slots);
+    if (c->retk == FK_VOID) {
+        return;
+    }
+    if (c->retk == FK_I32) {
+        *(int32_t *)ret = (int32_t)out;
+        return;
+    }
+    if (c->retk == FK_F32) {
+        int32_t bits = (int32_t)out;
+        float f = 0;
+        memcpy(&f, &bits, sizeof(float));
+        *(float *)ret = f;
+        return;
+    }
+    if (c->retk == FK_F64) {
+        double d = 0;
+        memcpy(&d, &out, sizeof(double));
+        *(double *)ret = d;
+        return;
+    }
+    *(void **)ret = (void *)(intptr_t)out;
+}
+
+int64_t aot_closure_new(int64_t target, int32_t retk, int64_t kinds, int32_t nargs)
+{
+    aot_closure *c = (aot_closure *)calloc(1, sizeof(aot_closure));
+    if (!c) {
+        return 0;
+    }
+    c->target = target;
+    c->retk = retk;
+    c->nargs = nargs > 16 ? 16 : nargs;
+    int32_t *kk = (int32_t *)(intptr_t)kinds;
+    ffi_type **at = (ffi_type **)calloc((size_t)(c->nargs > 0 ? c->nargs : 1), sizeof(ffi_type *));
+    if (!at) {
+        free(c);
+        return 0;
+    }
+    for (int32_t i = 0; i < c->nargs; i++) {
+        c->argk[i] = kk[i * 2];
+        ffi_type_for(c->argk[i], &at[i]);
+    }
+    ffi_type *rt = 0;
+    ffi_type_for(retk, &rt);
+    if (ffi_prep_cif(&c->cif, FFI_DEFAULT_ABI, (unsigned int)c->nargs, rt, at) != FFI_OK) {
+        free(at);
+        free(c);
+        return 0;
+    }
+    c->at = at;
+    c->rt = rt;
+    c->closure = (ffi_closure *)ffi_closure_alloc(sizeof(ffi_closure), &c->code);
+    if (!c->closure) {
+        free(at);
+        free(c);
+        return 0;
+    }
+    if (ffi_prep_closure_loc(c->closure, &c->cif, aot_closure_tramp, c, c->code) != FFI_OK) {
+        ffi_closure_free(c->closure);
+        free(at);
+        free(c);
+        return 0;
+    }
+    return (int64_t)(intptr_t)c->code;
+}
+
+int32_t aot_ffi_call_qsort(int64_t fn, int64_t base, int32_t n, int32_t width, int64_t cmp)
+{
+    if (fn == 0 || cmp == 0) {
+        return 0;
+    }
+    void (*f)(void *, size_t, size_t, void *) = (void (*)(void *, size_t, size_t, void *))(intptr_t)fn;
+    f((void *)(intptr_t)base, (size_t)n, (size_t)width, (void *)(intptr_t)cmp);
+    return n;
+}

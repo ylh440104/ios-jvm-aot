@@ -8,4 +8,6 @@ public final class NativeCall {
     public static native long bufBytes(Object buf);
     public static native int callBuf1(long fn, Object buf);
     public static native int callBuf2(long fn, int a, Object buf);
+    public static native long callback(String owner, String name, String desc);
+    public static native int callQsort(long fn, long base, int n, int width, long cmp);
 }

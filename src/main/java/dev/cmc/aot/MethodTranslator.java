@@ -275,6 +275,10 @@ public final class MethodTranslator {
                 } else if (c instanceof Double d) {
                     pushDoubleLit(d);
 } else if (c instanceof String s) {
+                     recentStrings.add(s);
+                     if (recentStrings.size() > 4) {
+                         recentStrings.remove(0);
+                     }
                      pushStringLit(s);
                  } else if (c instanceof org.objectweb.asm.Type t) {
                      emitClassLiteral(t);
@@ -2337,6 +2341,53 @@ String objv = popRef();
         return false;
     }
 
+    private final List<String> recentStrings = new java.util.ArrayList<>();
+
+    private boolean invokeClosure(MethodInsnNode m) {
+        if (!"NativeCall".equals(m.owner) || !"callback".equals(m.name)) {
+            return false;
+        }
+        if (!"(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J".equals(m.desc)) {
+            return false;
+        }
+        popRef();
+        popRef();
+        popRef();
+        int n = recentStrings.size();
+        if (n < 3) {
+            return false;
+        }
+        String ownerName = recentStrings.get(n - 3);
+        String methName = recentStrings.get(n - 2);
+        String methDesc = recentStrings.get(n - 1);
+        recentStrings.clear();
+        String sym = ClosureSupport.symbolOf(ownerName, methName, methDesc);
+        declares.add("declare i64 @aot_closure_new(i64, i32, i64, i32)");
+        List<Integer> codes = ClosureSupport.argCodes(methDesc);
+        StringBuilder arr = new StringBuilder("[");
+        int cnt = Math.max(codes.size(), 1);
+        for (int i = 0; i < cnt; i++) {
+            if (i > 0) {
+                arr.append(", ");
+            }
+            arr.append("i32 ").append(i < codes.size() ? codes.get(i) : 0).append(", i32 0");
+        }
+        arr.append("]");
+        String garr = "cbk_kinds_" + ClosureSupport.TARGETS.size();
+        declares.add("@" + garr + " = private unnamed_addr constant [" + cnt * 2 + " x i32] " + arr + ", align 4");
+        String addr = nv("v");
+        body.append("  ").append(addr).append(" = ptrtoint ptr @").append(garr).append(" to i64\n");
+        String fp = nv("v");
+        body.append("  ").append(fp).append(" = ptrtoint ptr @").append(sym).append(" to i64\n");
+        String codePtr = nv("v");
+        body.append("  ").append(codePtr).append(" = call i64 @aot_closure_new(i64 ").append(fp)
+            .append(", i32 ").append(ClosureSupport.retCode(methDesc)).append(", i64 ").append(addr)
+            .append(", i32 ").append(codes.size()).append(")\n");
+        pushLong(codePtr);
+        return true;
+    }
+
+
     private boolean invokeCollection(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
@@ -2604,6 +2655,9 @@ String objv = popRef();
     private boolean invokeStaticJdk(MethodInsnNode m) {
         String owner = m.owner;
         String key = m.name + m.desc;
+        if (invokeClosure(m)) {
+            return true;
+        }
         if (invokeFfi(owner, m)) {
             return true;
         }
