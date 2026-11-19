@@ -3398,6 +3398,54 @@ int64_t aot_str_format(int64_t fmt, int64_t args)
 
 typedef struct { void *handle; } ffi_lib;
 
+#define AOT_SYM_CAP 4096
+
+typedef struct {
+    char name[96];
+    void *addr;
+} aot_sym_entry;
+
+static aot_sym_entry aot_sym_tab[AOT_SYM_CAP];
+static int32_t aot_sym_count;
+
+void aot_sym_register(const char *name, void *addr)
+{
+    if (!name || !addr || aot_sym_count >= AOT_SYM_CAP) {
+        return;
+    }
+    int32_t n = 0;
+    while (name[n] && n < 95) {
+        aot_sym_tab[aot_sym_count].name[n] = name[n];
+        n++;
+    }
+    aot_sym_tab[aot_sym_count].name[n] = 0;
+    aot_sym_tab[aot_sym_count].addr = addr;
+    aot_sym_count++;
+}
+
+static int aot_sym_name_eq(const char *a, const char *b)
+{
+    int i = 0;
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static void *aot_sym_lookup_static(const char *name)
+{
+    for (int32_t i = 0; i < aot_sym_count; i++) {
+        if (aot_sym_name_eq(aot_sym_tab[i].name, name)) {
+            return aot_sym_tab[i].addr;
+        }
+    }
+    return 0;
+}
+
+
 typedef struct {
     int64_t user_ptr;
     int64_t size;
@@ -3473,12 +3521,11 @@ int64_t aot_ffi_open(int64_t path)
     return (int64_t)(intptr_t)lib;
 }
 
-int64_t aot_ffi_sym(int64_t libh, int64_t name)
+int64_t aot_ffi_sym_nohandle(int64_t name)
 {
-    if (libh == 0 || name == 0) {
+    if (name == 0) {
         return 0;
     }
-    ffi_lib *lib = (ffi_lib *)(intptr_t)libh;
     aot_string *s = (aot_string *)(intptr_t)name;
     const uint16_t *cs = (const uint16_t *)(intptr_t)s->chars;
     char nm[1024];
@@ -3487,7 +3534,39 @@ int64_t aot_ffi_sym(int64_t libh, int64_t name)
         nm[i] = (char)cs[i];
     }
     nm[n] = 0;
-    void *p = dlsym(lib->handle, nm);
+    void *p = aot_sym_lookup_static(nm);
+    if (p) {
+        return (int64_t)(intptr_t)p;
+    }
+    p = dlsym(RTLD_DEFAULT, nm);
+    return (int64_t)(intptr_t)p;
+}
+
+int64_t aot_ffi_sym(int64_t libh, int64_t name)
+{
+    if (name == 0) {
+        return 0;
+    }
+    aot_string *s = (aot_string *)(intptr_t)name;
+    const uint16_t *cs = (const uint16_t *)(intptr_t)s->chars;
+    char nm[1024];
+    int32_t n = s->length < 1000 ? s->length : 1000;
+    for (int32_t i = 0; i < n; i++) {
+        nm[i] = (char)cs[i];
+    }
+    nm[n] = 0;
+    void *p = aot_sym_lookup_static(nm);
+    if (p) {
+        return (int64_t)(intptr_t)p;
+    }
+    if (libh != 0) {
+        ffi_lib *lib = (ffi_lib *)(intptr_t)libh;
+        p = dlsym(lib->handle, nm);
+        if (p) {
+            return (int64_t)(intptr_t)p;
+        }
+    }
+    p = dlsym(RTLD_DEFAULT, nm);
     return (int64_t)(intptr_t)p;
 }
 
