@@ -1810,6 +1810,10 @@ String objv = popRef();
             emitLambda(insn);
             return;
         }
+        if ("java/lang/runtime/ObjectMethods".equals(bsm)) {
+            emitRecordMethod(insn);
+            return;
+        }
         if (!"java/lang/invoke/StringConcatFactory".equals(bsm)) {
             fail("unsupported invokedynamic bootstrap " + bsm);
             return;
@@ -1864,6 +1868,184 @@ String objv = popRef();
                 i = j;
             }
         }
+        String res = nv("v");
+        body.append("  ").append(res).append(" = call i64 @aot_indy_end(i64 ").append(sbv).append(")\n");
+        pushRef(res);
+    }
+
+    private void emitRecordMethod(InvokeDynamicInsnNode insn) {
+        List<String> kinds = TypeInfo.argKinds(insn.desc);
+        String[] raw = new String[kinds.size()];
+        for (int i = kinds.size() - 1; i >= 0; i--) {
+            raw[i] = popOfKind(kinds.get(i));
+        }
+        if (raw.length < 1) {
+            fail("record indy without receiver");
+            return;
+        }
+        String self = raw[0];
+        String[] callArgs = raw;
+        List<org.objectweb.asm.Handle> getters = new ArrayList<>();
+        String fieldNames = null;
+        for (Object o : insn.bsmArgs) {
+            if (o instanceof org.objectweb.asm.Handle h) {
+                getters.add(h);
+            } else if (o instanceof String str && fieldNames == null) {
+                fieldNames = str;
+            }
+        }
+        if (getters.isEmpty()) {
+            fail("record indy without field accessors");
+            return;
+        }
+        List<Integer> slots = new ArrayList<>();
+        List<String> gdescs = new ArrayList<>();
+        for (org.objectweb.asm.Handle h : getters) {
+            if (h.getTag() <= org.objectweb.asm.Opcodes.H_PUTSTATIC) {
+                slots.add(layout.fieldOffset(h.getOwner(), h.getName()));
+                gdescs.add(h.getDesc());
+            } else {
+                slots.add(layout.slotOf(h.getName(), h.getDesc()));
+                gdescs.add(resultDescOf(h.getDesc()));
+            }
+        }
+        if ("equals".equals(insn.name)) {
+            emitRecordEquals(self, callArgs, slots, gdescs);
+        } else if ("hashCode".equals(insn.name)) {
+            emitRecordHashCode(self, slots, gdescs);
+        } else if ("toString".equals(insn.name)) {
+            emitRecordToString(self, fieldNames, slots, gdescs);
+        } else {
+            fail("unsupported record method " + insn.name);
+        }
+    }
+
+    private String resultDescOf(String methodDesc) {
+        return org.objectweb.asm.Type.getReturnType(methodDesc).getDescriptor();
+    }
+
+    private String recordFieldKind(String desc) {
+        if (desc == null || desc.isEmpty()) {
+            return "L";
+        }
+        if (desc.charAt(0) != '(') {
+            return switch (desc.charAt(0)) {
+                case 'I', 'S', 'B', 'C', 'Z' -> "I";
+                case 'J' -> "J";
+                case 'F' -> "F";
+                case 'D' -> "D";
+                default -> "L";
+            };
+        }
+        return TypeInfo.returnKind(desc);
+    }
+
+    private void emitRecordEquals(String self, String[] raw, List<Integer> slots, List<String> gdescs) {
+        String other = raw.length > 1 ? raw[1] : "0";
+        String samev = nv("v");
+        body.append("  ").append(samev).append(" = icmp eq i64 ").append(self).append(", ").append(other).append("\n");
+        String an = nv("v");
+        String bn = nv("v");
+        String either = nv("v");
+        String skip = nv("v");
+        body.append("  ").append(an).append(" = icmp eq i64 ").append(self).append(", 0\n");
+        body.append("  ").append(bn).append(" = icmp eq i64 ").append(other).append(", 0\n");
+        body.append("  ").append(either).append(" = or i1 ").append(an).append(", ").append(bn).append("\n");
+        body.append("  ").append(skip).append(" = or i1 ").append(samev).append(", ").append(either).append("\n");
+        String acc = nv("v");
+        body.append("  ").append(acc).append(" = select i1 ").append(skip).append(", i32 0, i32 1\n");
+        for (int i = 0; i < slots.size(); i++) {
+            String k = recordFieldKind(gdescs.get(i));
+            String declName = switch (k) {
+                case "I", "S", "B", "C", "Z" -> "aot_om_field_eq_int";
+                case "J" -> "aot_om_field_eq_long";
+                case "D", "F" -> "aot_om_field_eq_double";
+                default -> "aot_om_field_eq_ref";
+            };
+            declares.add("declare i32 @" + declName + "(i32, i64, i64)");
+            String rv = nv("v");
+            body.append("  ").append(rv).append(" = call i32 @").append(declName).append("(i32 ")
+                .append(slots.get(i)).append(", i64 ").append(self).append(", i64 ").append(other).append(")\n");
+            String nz = nv("v");
+            body.append("  ").append(nz).append(" = icmp ne i32 ").append(rv).append(", 0\n");
+            String nxt = nv("v");
+            body.append("  ").append(nxt).append(" = select i1 ").append(nz).append(", i32 ").append(acc)
+                .append(", i32 0\n");
+            acc = nxt;
+        }
+        String okv = nv("v");
+        body.append("  ").append(okv).append(" = select i1 ").append(samev).append(", i32 1, i32 ").append(acc).append("\n");
+        pushInt(okv);
+    }
+
+    private void emitRecordHashCode(String self, List<Integer> slots, List<String> gdescs) {
+        String acc = "0";
+        for (int i = 0; i < slots.size(); i++) {
+            String k = recordFieldKind(gdescs.get(i));
+            String declName = switch (k) {
+                case "I", "S", "B", "C" -> "aot_om_hash_int";
+                case "J" -> "aot_om_hash_long";
+                case "D", "F" -> "aot_om_hash_double";
+                case "Z" -> "aot_om_hash_bool";
+                default -> "aot_om_hash_ref";
+            };
+            declares.add("declare i32 @" + declName + "(i32, i64)");
+            String fv = nv("v");
+            body.append("  ").append(fv).append(" = call i32 @").append(declName).append("(i32 ")
+                .append(slots.get(i)).append(", i64 ").append(self).append(")\n");
+            String mul = nv("v");
+            body.append("  ").append(mul).append(" = mul i32 ").append(acc).append(", 31\n");
+            String sum = nv("v");
+            body.append("  ").append(sum).append(" = add i32 ").append(mul).append(", ").append(fv).append("\n");
+            acc = sum;
+        }
+        pushInt(acc);
+    }
+
+    private void emitRecordToString(String self, String fieldNames, List<Integer> slots, List<String> gdescs) {
+        String cls = owner.name();
+        int slash = cls.lastIndexOf('/');
+        String simple = slash >= 0 ? cls.substring(slash + 1) : cls;
+        int dollar = simple.lastIndexOf('$');
+        if (dollar > 0) {
+            simple = simple.substring(dollar + 1);
+        }
+        declares.add("declare i64 @aot_indy_begin()");
+        declares.add("declare i64 @aot_indy_end(i64)");
+        declares.add("declare i64 @aot_indy_str(i64, i64)");
+        String sbv = nv("sb");
+        body.append("  ").append(sbv).append(" = call i64 @aot_indy_begin()\n");
+        String[] names = fieldNames == null ? new String[0] : fieldNames.split(";");
+        for (int i = 0; i < slots.size(); i++) {
+            StringBuilder head = new StringBuilder();
+            if (i == 0) {
+                head.append(simple).append('[');
+            } else {
+                head.append(", ");
+            }
+            head.append(i < names.length ? names[i] : ("f" + i)).append('=');
+            pushStringLit(head.toString());
+            String sv = pop();
+            body.append("  call i64 @aot_indy_str(i64 ").append(sbv).append(", i64 ").append(sv).append(")\n");
+            String k = recordFieldKind(gdescs.get(i));
+            String declName = switch (k) {
+                case "I", "S", "B" -> "aot_om_str_int";
+                case "J" -> "aot_om_str_long";
+                case "D" -> "aot_om_str_double";
+                case "F" -> "aot_om_str_float";
+                case "Z" -> "aot_om_str_bool";
+                case "C" -> "aot_om_str_char";
+                default -> "aot_om_str_ref";
+            };
+            declares.add("declare i64 @" + declName + "(i32, i64)");
+            String pv = nv("v");
+            body.append("  ").append(pv).append(" = call i64 @").append(declName).append("(i32 ")
+                .append(slots.get(i)).append(", i64 ").append(self).append(")\n");
+            body.append("  call i64 @aot_indy_str(i64 ").append(sbv).append(", i64 ").append(pv).append(")\n");
+        }
+        pushStringLit("]");
+        String tailv = pop();
+        body.append("  call i64 @aot_indy_str(i64 ").append(sbv).append(", i64 ").append(tailv).append(")\n");
         String res = nv("v");
         body.append("  ").append(res).append(" = call i64 @aot_indy_end(i64 ").append(sbv).append(")\n");
         pushRef(res);
@@ -3420,7 +3602,7 @@ String objv = popRef();
             pushRef(s);
             return true;
         }
-        if ("hashCode()I".equals(key)) {
+        if ("hashCode()I".equals(key) && !layout.hasSlot("hashCode", "()I")) {
             String self = popRef();
             emitStrCall("aot_object_hash", "i32", self);
             return true;

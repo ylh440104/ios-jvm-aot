@@ -314,11 +314,51 @@ public final class Layout {
                 if (ClassParser.isStatic(mn) || ClassParser.isPrivate(mn) || ClassParser.isCtor(mn.name)) {
                     continue;
                 }
-                String key = mn.name + mn.desc;
-                if (!slots.containsKey(key)) {
-                    slots.put(key, slotKeys.size());
-                    slotKeys.add(key);
+                registerSlot(mn.name, mn.desc);
+            }
+        }
+        for (ClassInfo c : classes.values()) {
+            collectHierarchySlots(c);
+        }
+    }
+
+    private void registerSlot(String name, String desc) {
+        String key = name + desc;
+        if (!slots.containsKey(key)) {
+            slots.put(key, slotKeys.size());
+            slotKeys.add(key);
+        }
+    }
+
+    private void collectHierarchySlots(ClassInfo c) {
+        java.util.ArrayDeque<String> queue = new java.util.ArrayDeque<>();
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        if (c.superName() != null) {
+            queue.add(c.superName());
+        }
+        if (c.interfaces() != null) {
+            queue.addAll(c.interfaces());
+        }
+        while (!queue.isEmpty()) {
+            String name = queue.poll();
+            if (name == null || !seen.add(name)) {
+                continue;
+            }
+            ClassInfo up = classes.get(name);
+            if (up == null) {
+                continue;
+            }
+            for (MethodNode mn : up.methods()) {
+                if (ClassParser.isStatic(mn) || ClassParser.isPrivate(mn) || ClassParser.isCtor(mn.name)) {
+                    continue;
                 }
+                registerSlot(mn.name, mn.desc);
+            }
+            if (up.superName() != null) {
+                queue.add(up.superName());
+            }
+            if (up.interfaces() != null) {
+                queue.addAll(up.interfaces());
             }
         }
     }
@@ -401,7 +441,7 @@ public final class Layout {
     public int slotOf(String name, String desc) {
         Integer i = slots.get(name + desc);
         if (i == null) {
-            throw new AotException("no vtable slot for " + name + desc);
+            throw new AotException("no vtable slot for " + name + desc + " | total_slots=" + slotKeys.size() + " present_sample=" + (slotKeys.isEmpty() ? "-" : slotKeys.get(0)));
         }
         return i;
     }

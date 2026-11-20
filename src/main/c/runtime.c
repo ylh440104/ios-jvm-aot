@@ -1823,6 +1823,161 @@ int64_t aot_long_box_get(int64_t box);
 int64_t aot_str_from_utf8(int64_t ptr, int32_t len);
 int64_t aot_tostring_of(int32_t tid, int64_t self) __attribute__((weak));
 
+extern int64_t aot_mslot_dispatch(int32_t slot, int64_t self, int64_t args) __attribute__((weak));
+
+static int64_t aot_om_getter_i(int32_t off, int64_t self)
+{
+    return (int64_t)(*(int32_t *)((char *)(intptr_t)self + off));
+}
+
+static int64_t aot_om_getter_j(int32_t off, int64_t self)
+{
+    return *(int64_t *)((char *)(intptr_t)self + off);
+}
+
+int32_t aot_om_field_eq_ref(int32_t slot, int64_t a, int64_t b)
+{
+    int64_t va = aot_om_getter_j(slot, a);
+    int64_t vb = aot_om_getter_j(slot, b);
+    if (va == vb) {
+        return 1;
+    }
+    if (va == 0 || vb == 0) {
+        return 0;
+    }
+    int32_t ta = *(int32_t *)((char *)(intptr_t)va + 8);
+    int32_t tb = *(int32_t *)((char *)(intptr_t)vb + 8);
+    if (ta != tb) {
+        return 0;
+    }
+    if (ta == aot_string_type_id) {
+        return aot_str_equals(va, vb);
+    }
+    return 0;
+}
+
+int32_t aot_om_field_eq_int(int32_t slot, int64_t a, int64_t b)
+{
+    return (int32_t)aot_om_getter_i(slot, a) == (int32_t)aot_om_getter_i(slot, b);
+}
+
+int32_t aot_om_field_eq_long(int32_t slot, int64_t a, int64_t b)
+{
+    return aot_om_getter_j(slot, a) == aot_om_getter_j(slot, b);
+}
+
+int32_t aot_om_field_eq_double(int32_t slot, int64_t a, int64_t b)
+{
+    int64_t ra = aot_om_getter_j(slot, a);
+    int64_t rb = aot_om_getter_j(slot, b);
+    if (ra == rb) {
+        return 1;
+    }
+    double da = 0;
+    double db = 0;
+    memcpy(&da, &ra, sizeof(double));
+    memcpy(&db, &rb, sizeof(double));
+    return da == db;
+}
+
+int32_t aot_om_hash_int(int32_t slot, int64_t self)
+{
+    return (int32_t)aot_om_getter_i(slot, self);
+}
+
+int32_t aot_om_hash_long(int32_t slot, int64_t self)
+{
+    int64_t v = aot_om_getter_j(slot, self);
+    return (int32_t)(v ^ (v >> 32));
+}
+
+int32_t aot_om_hash_double(int32_t slot, int64_t self)
+{
+    int64_t bits = aot_om_getter_j(slot, self);
+    double d = 0;
+    memcpy(&d, &bits, sizeof(double));
+    if (d == 0.0) {
+        return 0;
+    }
+    return (int32_t)(bits ^ (bits >> 32));
+}
+
+int32_t aot_om_hash_bool(int32_t slot, int64_t self)
+{
+    return (int32_t)aot_om_getter_i(slot, self) != 0 ? 1231 : 1237;
+}
+
+int32_t aot_om_hash_ref(int32_t slot, int64_t self)
+{
+    int64_t v = aot_om_getter_j(slot, self);
+    if (v == 0) {
+        return 0;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)v + 8);
+    if (tid == aot_string_type_id) {
+        return aot_str_hash(v);
+    }
+    return (int32_t)(intptr_t)v;
+}
+
+static int64_t aot_str_from_literal(const char *text)
+{
+    int32_t n = 0;
+    while (text[n]) {
+        n++;
+    }
+    return aot_str_from_utf8((int64_t)(intptr_t)text, n);
+}
+
+int64_t aot_om_str_int(int32_t slot, int64_t self)
+{
+    return aot_str_of_int((int32_t)aot_om_getter_i(slot, self));
+}
+
+int64_t aot_om_str_long(int32_t slot, int64_t self)
+{
+    return aot_str_of_long(aot_om_getter_j(slot, self));
+}
+
+int64_t aot_om_str_double(int32_t slot, int64_t self)
+{
+    int64_t bits = aot_om_getter_j(slot, self);
+    double d = 0;
+    memcpy(&d, &bits, sizeof(double));
+    return aot_str_of_double(d);
+}
+
+int64_t aot_om_str_float(int32_t slot, int64_t self)
+{
+    int32_t bits = (int32_t)aot_om_getter_i(slot, self);
+    float f = 0;
+    memcpy(&f, &bits, sizeof(float));
+    return aot_str_of_double((double)f);
+}
+
+int64_t aot_om_str_bool(int32_t slot, int64_t self)
+{
+    return aot_om_getter_i(slot, self) != 0 ? aot_str_from_literal("true") : aot_str_from_literal("false");
+}
+
+int64_t aot_om_str_char(int32_t slot, int64_t self)
+{
+    return aot_str_of_char((uint16_t)(aot_om_getter_i(slot, self) & 0xFFFF));
+}
+
+int64_t aot_om_str_ref(int32_t slot, int64_t self)
+{
+    int64_t v = aot_om_getter_j(slot, self);
+    if (v == 0) {
+        return aot_str_from_literal("null");
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)v + 8);
+    if (tid == aot_string_type_id) {
+        return v;
+    }
+    return aot_str_from_literal("<object>");
+}
+
 int64_t aot_indy_begin(void)
 {
     return aot_sb_new();
