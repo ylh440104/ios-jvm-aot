@@ -1978,6 +1978,16 @@ int64_t aot_om_str_ref(int32_t slot, int64_t self)
     return aot_str_from_literal("<object>");
 }
 
+int64_t aot_jdk_new(int64_t class_name)
+{
+    int64_t obj = (int64_t)(intptr_t)gc_alloc(32);
+    if (obj == 0) {
+        return 0;
+    }
+    *(int64_t *)((char *)(intptr_t)obj + 16) = class_name;
+    return obj;
+}
+
 int64_t aot_indy_begin(void)
 {
     return aot_sb_new();

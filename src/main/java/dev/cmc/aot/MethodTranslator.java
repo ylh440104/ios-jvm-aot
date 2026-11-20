@@ -1142,6 +1142,15 @@ private String currentHandler() {
             return;
         }
         if (!layout.hasClass(cls)) {
+            if (cls.startsWith("java/") || cls.startsWith("javax/")) {
+                declares.add("declare i64 @aot_jdk_new(i64)");
+                pushStringLit(cls.replace('/', '.'));
+                String cn = pop();
+                String r = nv("np");
+                body.append("  ").append(r).append(" = call i64 @aot_jdk_new(i64 ").append(cn).append(")\n");
+                pushRef(r);
+                return;
+            }
             fail("unknown class for new: " + cls);
         }
         declares.add("declare ptr @gc_calloc(i64, i64)");
@@ -1488,7 +1497,7 @@ body.append("  ").append(base).append(" = getelementptr i8, ptr ").append(ep).ap
             raw[i] = popOfKind(kinds.get(i));
         }
 String objv = popRef();
-        if (m.owner.startsWith("java/") && !layout.hasSlot(m.name, m.desc)) {
+        if (!layout.hasSlot(m.name, m.desc)) {
             pushReturnPlaceholder(m.desc);
             return;
         }
@@ -3779,6 +3788,25 @@ String objv = popRef();
             body.append("  ").append(fd).append(" = fpext float ").append(ff).append(" to double\n");
             declares.add("declare i32 @printf(ptr, ...)");
             body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(fmt).append(", double ").append(fd).append(")\n");
+        } else if ("print_bool".equals(sig.cName) || "print_bool_raw".equals(sig.cName)) {
+            String tfmt = pool.internFormat("print_bool".equals(sig.cName) ? "true\\0A" : "true");
+            String ffmt = pool.internFormat("print_bool".equals(sig.cName) ? "false\\0A" : "false");
+            String bv = nv("v");
+            body.append("  ").append(bv).append(" = trunc i64 ").append(args[0]).append(" to i32\n");
+            String nz = nv("v");
+            body.append("  ").append(nz).append(" = icmp ne i32 ").append(bv).append(", 0\n");
+            String tl = "Lbl" + (labelSeq++);
+            String fl = "Lbl" + (labelSeq++);
+            String el = "Lbl" + (labelSeq++);
+            body.append("  br i1 ").append(nz).append(", label %").append(tl).append(", label %").append(fl).append("\n");
+            body.append(tl).append(":\n");
+            declares.add("declare i32 @printf(ptr, ...)");
+            body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(tfmt).append(")\n");
+            body.append("  br label %").append(el).append("\n");
+            body.append(fl).append(":\n");
+            body.append("  ").append(nv("r")).append(" = call i32 (ptr, ...) @printf(ptr ").append(ffmt).append(")\n");
+            body.append("  br label %").append(el).append("\n");
+            body.append(el).append(":\n");
         } else if ("print_obj".equals(sig.cName)) {
             declares.add("declare void @aot_print_object(i64)");
             declares.add("declare i32 @putchar(i32)");

@@ -116,7 +116,7 @@ public final class Coverage {
             return head;
         }
         if (head.startsWith("unknown class for new")) {
-            return "unknown class for new <class>";
+            return head;
         }
         if (head.startsWith("unknown field")) {
             return "unknown field <owner.field>";
