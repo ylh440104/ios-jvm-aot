@@ -9,6 +9,8 @@ import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LookupSwitchInsnNode;
+import org.objectweb.asm.tree.TableSwitchInsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -440,6 +442,8 @@ public final class MethodTranslator {
                 body.append("  br label %").append(label(target)).append("\n");
                 terminated = true;
             }
+            case Opcodes.TABLESWITCH -> emitTableSwitch((TableSwitchInsnNode) insn);
+            case Opcodes.LOOKUPSWITCH -> emitLookupSwitch((LookupSwitchInsnNode) insn);
             case Opcodes.POP -> pop();
             case Opcodes.POP2 -> {
                 String k = stackKindAt(0);
@@ -4223,6 +4227,43 @@ String objv = popRef();
         String t = nv("p");
         body.append("  ").append(t).append(" = inttoptr i64 ").append(v64).append(" to ptr\n");
         return t;
+    }
+
+    private void emitTableSwitch(TableSwitchInsnNode insn) {
+        String key = popInt();
+        String def = label(insn.dflt);
+        StringBuilder cases = new StringBuilder();
+        for (int i = 0; i < insn.labels.size(); i++) {
+            int value = insn.min + i;
+            if (i > 0) {
+                cases.append(' ');
+            }
+            cases.append("i32 ").append(value).append(", label %").append(label(insn.labels.get(i)));
+        }
+        body.append("  switch i32 ").append(key).append(", label %").append(def);
+        if (insn.labels.size() > 0) {
+            body.append(" [ ").append(cases).append(" ]");
+        }
+        body.append("\n");
+        terminated = true;
+    }
+
+    private void emitLookupSwitch(LookupSwitchInsnNode insn) {
+        String key = popInt();
+        String def = label(insn.dflt);
+        StringBuilder cases = new StringBuilder();
+        for (int i = 0; i < insn.labels.size(); i++) {
+            if (i > 0) {
+                cases.append(' ');
+            }
+            cases.append("i32 ").append(insn.keys.get(i)).append(", label %").append(label(insn.labels.get(i)));
+        }
+        body.append("  switch i32 ").append(key).append(", label %").append(def);
+        if (insn.labels.size() > 0) {
+            body.append(" [ ").append(cases).append(" ]");
+        }
+        body.append("\n");
+        terminated = true;
     }
 
     private String label(LabelNode l) {
