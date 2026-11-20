@@ -2590,11 +2590,35 @@ String objv = popRef();
             || "java/util/Vector".equals(owner) || "java/util/List".equals(owner)
             || "java/util/Collection".equals(owner) || "java/util/HashSet".equals(owner)
             || "java/util/LinkedHashSet".equals(owner) || "java/util/Set".equals(owner)
-            || "java/lang/Iterable".equals(owner);
+            || "java/lang/Iterable".equals(owner) || "java/util/Iterator".equals(owner);
         boolean isMap = "java/util/HashMap".equals(owner) || "java/util/LinkedHashMap".equals(owner)
             || "java/util/TreeMap".equals(owner) || "java/util/Hashtable".equals(owner)
             || "java/util/Map".equals(owner);
         if (isList) {
+            if ("iterator()Ljava/util/Iterator;".equals(key)) {
+                String self = popRef();
+                declares.add("declare i64 @aot_iter_new(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_iter_new(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
+            if ("hasNext()Z".equals(key)) {
+                String self = popRef();
+                declares.add("declare i32 @aot_iter_has_next(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i32 @aot_iter_has_next(i64 ").append(self).append(")\n");
+                pushInt(r);
+                return true;
+            }
+            if ("next()Ljava/lang/Object;".equals(key)) {
+                String self = popRef();
+                declares.add("declare i64 @aot_iter_next(i64)");
+                String r = nv("v");
+                body.append("  ").append(r).append(" = call i64 @aot_iter_next(i64 ").append(self).append(")\n");
+                pushRef(r);
+                return true;
+            }
             if ("add(Ljava/lang/Object;)Z".equals(key)) {
                 String v = popRef();
                 String self = popRef();

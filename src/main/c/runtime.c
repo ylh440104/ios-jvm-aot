@@ -2915,6 +2915,44 @@ int64_t aot_list_add(int64_t list, int64_t v)
     return 1;
 }
 
+int32_t aot_list_size(int64_t list);
+int64_t aot_list_get(int64_t list, int32_t idx);
+
+int64_t aot_iter_new(int64_t coll)
+{
+    int64_t it = (int64_t)(intptr_t)gc_alloc(32);
+    if (it == 0) {
+        return 0;
+    }
+    *(int64_t *)((char *)(intptr_t)it + 16) = coll;
+    *(int32_t *)((char *)(intptr_t)it + 24) = 0;
+    return it;
+}
+
+int32_t aot_iter_has_next(int64_t it)
+{
+    if (it == 0) {
+        return 0;
+    }
+    int64_t coll = *(int64_t *)((char *)(intptr_t)it + 16);
+    int32_t pos = *(int32_t *)((char *)(intptr_t)it + 24);
+    if (coll == 0) {
+        return 0;
+    }
+    return pos < aot_list_size(coll) ? 1 : 0;
+}
+
+int64_t aot_iter_next(int64_t it)
+{
+    if (it == 0) {
+        return 0;
+    }
+    int64_t coll = *(int64_t *)((char *)(intptr_t)it + 16);
+    int32_t pos = *(int32_t *)((char *)(intptr_t)it + 24);
+    *(int32_t *)((char *)(intptr_t)it + 24) = pos + 1;
+    return aot_list_get(coll, pos);
+}
+
 int64_t aot_list_get(int64_t list, int32_t idx)
 {
     if (list == 0) {
@@ -3051,11 +3089,37 @@ static void map_set_field(int64_t map, int which, int64_t v)
 
 static int32_t map_hash(int64_t key)
 {
+    if (key == 0) {
+        return 0;
+    }
+    int32_t tid = *(int32_t *)((char *)(intptr_t)key + 8);
+    if (tid == aot_string_type_id) {
+        return (int32_t)(aot_str_hash(key) & 0x7FFFFFFF);
+    }
     uint64_t v = (uint64_t)key;
     v ^= v >> 33;
     v *= 0xff51afd7ed558ccdULL;
     v ^= v >> 33;
     return (int32_t)(v & 0x7FFFFFFF);
+}
+
+static int32_t map_key_eq(int64_t a, int64_t b)
+{
+    if (a == b) {
+        return 1;
+    }
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    int32_t ta = *(int32_t *)((char *)(intptr_t)a + 8);
+    int32_t tb = *(int32_t *)((char *)(intptr_t)b + 8);
+    if (ta != tb) {
+        return 0;
+    }
+    if (ta == aot_string_type_id) {
+        return aot_str_equals(a, b);
+    }
+    return 0;
 }
 
 static int64_t map_lookup(int64_t map, int64_t key)
@@ -3073,7 +3137,7 @@ static int64_t map_lookup(int64_t map, int64_t key)
         if (ks[cur] == 0) {
             return -1;
         }
-        if (ks[cur] == key) {
+        if (ks[cur] == key || map_key_eq(ks[cur], key)) {
             return cur;
         }
     }
@@ -3136,7 +3200,7 @@ int64_t aot_map_put(int64_t map, int64_t key, int64_t value)
     int32_t slot = map_hash(key) & mask;
     for (int32_t probe = 0; probe < cap; probe++) {
         int32_t cur = (slot + probe) & mask;
-        if (ks[cur] == key) {
+        if (ks[cur] == key || (ks[cur] != 0 && map_key_eq(ks[cur], key))) {
             int64_t old = vs[cur];
             vs[cur] = value;
             return old;
