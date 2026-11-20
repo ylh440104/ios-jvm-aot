@@ -78,6 +78,7 @@ jobs:
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Buf1 -o build/fn-Buf1.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Buf5 -o build/fn-Buf5.ll
           java -jar target/ios-jvm-aot.jar -cp build/classes -entry Buf9 -o build/fn-Buf9.ll
+          java -jar target/ios-jvm-aot.jar -cp build/classes -entry Rec1 -o build/fn-Rec1.ll
 
       - name: Verify IR is well formed
         run: |
@@ -132,7 +133,7 @@ jobs:
       - name: Verify native interop
         run: |
           set -e
-          for t in Mem1 Ffi2 Ffi3 Buf1 Buf5 Buf9; do
+          for t in Mem1 Ffi2 Ffi3 Buf1 Buf5 Buf9 Rec1; do
             clang -O0 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o0" -lpthread -ldl -lffi
             "./build/fn-$t-o0" > "build/fn-$t-out.txt"
             clang -O1 "build/fn-$t.ll" src/main/c/runtime.c -o "build/fn-$t-o1" -lpthread -ldl -lffi
@@ -151,6 +152,8 @@ jobs:
           diff build/fn-b5-expect.txt build/fn-Buf5-out.txt && echo BUFARG_OK
           printf '1\n1\n1\n5\n10\n20\n30\n40\n50\ndone\n' > build/fn-b9-expect.txt
           diff build/fn-b9-expect.txt build/fn-Buf9-out.txt && echo CLOSURE_OK
+          printf '1\n0\n1\n1\nPoint[x=3, y=4]\n1\nNamed[name=alice, id=7]\ndone\n' > build/fn-rec1-expect.txt
+          diff build/fn-rec1-expect.txt build/fn-Rec1-out.txt && echo RECORD_OK
 
   ios:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'

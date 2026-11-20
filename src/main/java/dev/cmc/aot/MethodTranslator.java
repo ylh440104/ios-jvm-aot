@@ -3657,7 +3657,7 @@ String objv = popRef();
             emitIllegalMonitor(r);
             return true;
         }
-        if ("equals(Ljava/lang/Object;)Z".equals(m.name + d)) {
+        if ("equals(Ljava/lang/Object;)Z".equals(m.name + d) && !layout.hasSlot(m.name, d)) {
             String other = popRef();
             String self = popRef();
             String eq = nv("v");
